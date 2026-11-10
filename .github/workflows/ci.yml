@@ -9,20 +9,6 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
-    services:
-      mongodb:
-        image: mongo:7
-        ports:
-          - 27017:27017
-        options: >-
-          --replSet rs0
-          --bind_ip_all
-          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-          --health-start-period 5s
-
     steps:
       - uses: actions/checkout@v4
 
@@ -31,10 +17,22 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Initiate MongoDB replica set
-        run: >
-          docker exec ${{ job.services.mongodb.id }} mongosh --quiet --eval
-          'rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]})'
+      - name: Start MongoDB replica set
+        run: |
+          docker run -d --name mongodb -p 27017:27017 mongo:7 --replSet rs0 --bind_ip_all
+          for i in $(seq 1 30); do
+            if [ "$(docker exec mongodb mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok')" = "1" ]; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec mongodb mongosh --quiet --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]})'
+          for i in $(seq 1 30); do
+            if [ "$(docker exec mongodb mongosh --quiet --eval 'db.hello().isWritablePrimary')" = "true" ]; then
+              break
+            fi
+            sleep 1
+          done
 
       - run: bash scripts/check-repo-hygiene.sh
       - run: npm ci
@@ -50,3 +48,7 @@ jobs:
           MONGODB_URI_TEST: mongodb://127.0.0.1:27017/notes_api_test?replicaSet=rs0
 
       - run: npm audit --omit=dev --audit-level=high
+
+      - name: Stop MongoDB
+        if: always()
+        run: docker rm -f mongodb || true
