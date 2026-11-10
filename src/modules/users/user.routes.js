@@ -3,6 +3,7 @@ import { authenticate } from '../../middleware/authenticate.js';
 import { authorize } from '../../middleware/authorize.js';
 import { validate } from '../../middleware/validate.js';
 import {
+  bulkRemove,
   create,
   getOne,
   getUserPosts,
@@ -12,6 +13,7 @@ import {
   update,
 } from './user.controller.js';
 import {
+  bulkDeleteUsersSchema,
   createUserSchema,
   groupedInterestsQuerySchema,
   listUsersQuerySchema,
@@ -41,6 +43,13 @@ router.get(
 
 router.get('/', authenticate, authorize('admin'), validate(listUsersQuerySchema, 'query'), list);
 router.post('/', authenticate, authorize('admin'), validate(createUserSchema), create);
+router.post(
+  '/bulk-delete',
+  authenticate,
+  authorize('admin'),
+  validate(bulkDeleteUsersSchema),
+  bulkRemove,
+);
 
 router.get('/:id', authenticate, authorize('admin'), validate(userIdParamSchema, 'params'), getOne);
 router.patch(

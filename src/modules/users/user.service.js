@@ -123,6 +123,45 @@ export async function deleteUser(id, actorId) {
   return user;
 }
 
+export async function bulkDeleteUsers(ids, actorId) {
+  if (ids.includes(actorId)) {
+    throw new ApiError(400, 'You cannot delete your own account', undefined, 'SELF_DELETE');
+  }
+
+  const deleted = await withTransaction(async (session) => {
+    const users = await userRepository.findByIds(ids, { session });
+
+    if (users.length !== ids.length) {
+      throw new ApiError(404, 'One or more users not found');
+    }
+
+    if (users.some((user) => user.role === 'admin')) {
+      const remainingAdmins = await userRepository.countAdminsExcluding(ids, { session });
+
+      if (remainingAdmins < 1) {
+        throw new ApiError(400, 'Cannot delete the last admin', undefined, 'LAST_ADMIN');
+      }
+    }
+
+    const userIds = users.map((user) => user._id);
+
+    await userRepository.deleteManyByIds(userIds, { session });
+    await noteRepository.deleteByOwners(userIds, { session });
+    await postRepository.deleteByAuthors(userIds, { session });
+    await refreshTokenRepository.deleteByUsers(userIds, { session });
+
+    return users.length;
+  });
+
+  audit({
+    action: 'user.bulk_delete',
+    actorId,
+    count: deleted,
+  });
+
+  return deleted;
+}
+
 export async function groupUsersByInterests({ page, limit, interest }) {
   const { skip } = getPagination({ page, limit });
 

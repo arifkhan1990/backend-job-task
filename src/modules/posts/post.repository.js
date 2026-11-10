@@ -15,6 +15,11 @@ export const postRepository = {
     return session ? Post.deleteMany(filter, { session }) : Post.deleteMany(filter);
   },
 
+  deleteByAuthors(authorIds, { session } = {}) {
+    const filter = { author: { $in: authorIds } };
+    return session ? Post.deleteMany(filter, { session }) : Post.deleteMany(filter);
+  },
+
   deleteManyByIds(ids, { session } = {}) {
     const filter = { _id: { $in: ids } };
     return session ? Post.deleteMany(filter, { session }) : Post.deleteMany(filter);

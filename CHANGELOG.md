@@ -17,6 +17,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - MongoDB transactions for registration, profile updates, refresh rotation and cascade deletes.
 - `/health` and `/ready` endpoints.
 - OpenAPI 3 spec, Swagger UI at `/api/docs`, and reproducible `EXPLAIN` evidence.
+- Bulk user deletion for the admin DataTable, with self/last-admin protection and transaction-backed cascade.
 - Unit tests for pagination, token utilities and auth service edge cases.
 - `scripts/verify.sh`, `scripts/check-repo-hygiene.sh`, CI hygiene/audit checks and this changelog.
 - Backup/restore, observability and query-plan documentation.
@@ -24,7 +25,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Changed
 
 - Local, Docker and CI MongoDB run as a single-node replica set.
-- Tests now cover 35 integration/API cases plus 12 unit cases.
+- Tests now cover 37 integration/API cases plus 12 unit cases.
 
 ## [1.0.0] - 2026-11-10
 

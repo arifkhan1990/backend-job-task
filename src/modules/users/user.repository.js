@@ -24,8 +24,9 @@ export const userRepository = {
     return User.findById(id).lean();
   },
 
-  findByIds(ids) {
-    return User.find({ _id: { $in: ids } });
+  findByIds(ids, { session } = {}) {
+    const query = User.find({ _id: { $in: ids } });
+    return session ? query.session(session) : query;
   },
 
   list({ skip, limit }) {

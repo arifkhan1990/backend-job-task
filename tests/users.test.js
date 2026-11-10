@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import request from 'supertest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { app } from '../src/app.js';
@@ -106,6 +107,59 @@ describe('admin user management', () => {
       .set('Authorization', authHeader(admin))
       .send({ role: 'user' });
     expect(demoteSelf.status).toBe(400);
+  });
+
+  it('bulk deletes users and cascades their content', async () => {
+    const admin = await createAdmin();
+    const first = await createUser({ name: 'Bulk One' });
+    const second = await createUser({ name: 'Bulk Two' });
+
+    await Note.create({ title: 'One', content: 'Body', owner: first._id });
+    await Note.create({ title: 'Two', content: 'Body', owner: second._id });
+    await Post.create({ title: 'One', content: 'Body', author: first._id });
+    await Post.create({ title: 'Two', content: 'Body', author: second._id });
+
+    const res = await request(app)
+      .post('/api/v1/users/bulk-delete')
+      .set('Authorization', authHeader(admin))
+      .send({ ids: [first.id, second.id] });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.deleted).toBe(2);
+    expect(await User.countDocuments({ _id: { $in: [first._id, second._id] } })).toBe(0);
+    expect(await Note.countDocuments({ owner: { $in: [first._id, second._id] } })).toBe(0);
+    expect(await Post.countDocuments({ author: { $in: [first._id, second._id] } })).toBe(0);
+  });
+
+  it('rejects unsafe bulk deletes', async () => {
+    const admin = await createAdmin();
+    const user = await createUser();
+
+    const forbidden = await request(app)
+      .post('/api/v1/users/bulk-delete')
+      .set('Authorization', authHeader(user))
+      .send({ ids: [user.id] });
+    expect(forbidden.status).toBe(403);
+
+    const self = await request(app)
+      .post('/api/v1/users/bulk-delete')
+      .set('Authorization', authHeader(admin))
+      .send({ ids: [admin.id] });
+    expect(self.status).toBe(400);
+    expect(self.body.error.code).toBe('SELF_DELETE');
+
+    const missing = await request(app)
+      .post('/api/v1/users/bulk-delete')
+      .set('Authorization', authHeader(admin))
+      .send({ ids: [new mongoose.Types.ObjectId().toString()] });
+    expect(missing.status).toBe(404);
+
+    const empty = await request(app)
+      .post('/api/v1/users/bulk-delete')
+      .set('Authorization', authHeader(admin))
+      .send({ ids: [] });
+    expect(empty.status).toBe(400);
+    expect(empty.body.error.code).toBe('VALIDATION_ERROR');
   });
 
   it('groups users by interests with a single aggregate call', async () => {
