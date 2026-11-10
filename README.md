@@ -513,6 +513,10 @@ Set `CORS_ORIGIN` to the frontend origin when running the two containers togethe
 
 The production image/release flow is documented in [`deploy/README.md`](deploy/README.md). The release workflow publishes `ghcr.io/arifkhan1990/backend-job-task` on `v*` tags; the deploy job is opt-in via repository variables and secrets.
 
+## Production
+
+The API is deployed at **https://notes-api.nabasolution.tech**. Pushes to `main` auto-deploy through the self-hosted srv host; the container runs `npm run migrate:up` before starting.
+
 ---
 
 ## Design decisions and trade-offs

@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- Production runs at https://notes-api.nabasolution.tech with push-to-`main` auto deploy.
+
 ### Fixed
 
 - Production image now ships `migrations/` and `migrate-mongo-config.js` and runs pending migrations before the API starts.
