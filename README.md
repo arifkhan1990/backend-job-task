@@ -130,7 +130,7 @@ npm run check        # lint + tests
 
 ## API
 
-Base URL: `http://localhost:5000/api`
+Base URL: `http://localhost:5000/api/v1`
 
 All protected routes expect:
 
@@ -213,6 +213,7 @@ Single-resource responses use `{ "data": { ... } }`. Validation failures use:
 ```json
 {
   "error": {
+    "code": "VALIDATION_ERROR",
     "message": "Validation failed",
     "details": [{ "path": "email", "message": "Enter a valid email" }]
   }
@@ -224,7 +225,7 @@ Single-resource responses use `{ "data": { ... } }`. Validation failures use:
 Register:
 
 ```bash
-curl -X POST http://localhost:5000/api/auth/register \
+curl -X POST http://localhost:5000/api/v1/auth/register \
   -H 'Content-Type: application/json' \
   -d '{"name":"Alice","email":"alice@example.com","password":"Password123!","interests":["chess","reading"]}'
 ```
@@ -232,7 +233,7 @@ curl -X POST http://localhost:5000/api/auth/register \
 Login and store the token:
 
 ```bash
-TOKEN=$(curl -s -X POST http://localhost:5000/api/auth/login \
+TOKEN=$(curl -s -X POST http://localhost:5000/api/v1/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"alice@example.com","password":"Password123!"}' \
   | node -pe 'JSON.parse(require("fs").readFileSync(0)).data.token')
@@ -241,19 +242,19 @@ TOKEN=$(curl -s -X POST http://localhost:5000/api/auth/login \
 Create and list notes:
 
 ```bash
-curl -X POST http://localhost:5000/api/notes \
+curl -X POST http://localhost:5000/api/v1/notes \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"title":"First note","content":"Hello"}'
 
-curl "http://localhost:5000/api/notes?page=1&limit=10" \
+curl "http://localhost:5000/api/v1/notes?page=1&limit=10" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
 Public posts view:
 
 ```bash
-curl "http://localhost:5000/api/users/<userId>/posts?page=1&limit=10"
+curl "http://localhost:5000/api/v1/users/<userId>/posts?page=1&limit=10"
 ```
 
 ---
@@ -295,7 +296,7 @@ The interests aggregation is a blocking `$group`. No index can return pre-groupe
 
 ### 1. Users grouped by interests
 
-`GET /api/users/grouped-by-interests`
+`GET /api/v1/users/grouped-by-interests`
 
 One `User.aggregate()` call, one collection, no `find()` or `countDocuments()`:
 
@@ -328,7 +329,7 @@ A user with `['chess', 'reading']` appears once in each group. Interests are tri
 
 ### 2. Posts by user (`$lookup`)
 
-`GET /api/users/:id/posts`
+`GET /api/v1/users/:id/posts`
 
 One `User.aggregate()` call with exactly one `$lookup`:
 

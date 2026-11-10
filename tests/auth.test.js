@@ -12,7 +12,7 @@ const validRegistration = {
 
 describe('auth', () => {
   it('registers a user, normalizes interests and returns a token', async () => {
-    const res = await request(app).post('/api/auth/register').send(validRegistration);
+    const res = await request(app).post('/api/v1/auth/register').send(validRegistration);
 
     expect(res.status).toBe(201);
     expect(res.body.data.token).toBeTypeOf('string');
@@ -27,7 +27,7 @@ describe('auth', () => {
 
   it('does not allow role escalation during registration', async () => {
     const res = await request(app)
-      .post('/api/auth/register')
+      .post('/api/v1/auth/register')
       .send({ ...validRegistration, email: 'bob@example.com', role: 'admin' });
 
     expect(res.status).toBe(201);
@@ -38,18 +38,20 @@ describe('auth', () => {
     await createUser({ email: 'dupe@example.com' });
 
     const res = await request(app)
-      .post('/api/auth/register')
+      .post('/api/v1/auth/register')
       .send({ ...validRegistration, email: 'dupe@example.com' });
 
     expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('CONFLICT');
   });
 
   it('rejects invalid registration input', async () => {
     const res = await request(app)
-      .post('/api/auth/register')
+      .post('/api/v1/auth/register')
       .send({ name: 'A', email: 'not-an-email', password: 'short' });
 
     expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
     expect(res.body.error.details.length).toBeGreaterThan(0);
   });
 
@@ -57,13 +59,13 @@ describe('auth', () => {
     await createUser({ email: 'login@example.com', password: 'Password123!' });
 
     const login = await request(app)
-      .post('/api/auth/login')
+      .post('/api/v1/auth/login')
       .send({ email: 'login@example.com', password: 'Password123!' });
 
     expect(login.status).toBe(200);
 
     const me = await request(app)
-      .get('/api/auth/me')
+      .get('/api/v1/auth/me')
       .set('Authorization', `Bearer ${login.body.data.token}`);
 
     expect(me.status).toBe(200);
@@ -75,18 +77,18 @@ describe('auth', () => {
     await createUser({ email: 'badpass@example.com' });
 
     const res = await request(app)
-      .post('/api/auth/login')
+      .post('/api/v1/auth/login')
       .send({ email: 'badpass@example.com', password: 'WrongPassword1!' });
 
     expect(res.status).toBe(401);
   });
 
   it('rejects missing and invalid tokens', async () => {
-    const missing = await request(app).get('/api/auth/me');
+    const missing = await request(app).get('/api/v1/auth/me');
     expect(missing.status).toBe(401);
 
     const invalid = await request(app)
-      .get('/api/auth/me')
+      .get('/api/v1/auth/me')
       .set('Authorization', 'Bearer not-a-token');
     expect(invalid.status).toBe(401);
   });
@@ -98,11 +100,11 @@ describe('auth', () => {
     });
 
     const login = await request(app)
-      .post('/api/auth/login')
+      .post('/api/v1/auth/login')
       .send({ email: 'profile@example.com', password: 'Password123!' });
 
     const updated = await request(app)
-      .patch('/api/auth/me')
+      .patch('/api/v1/auth/me')
       .set('Authorization', `Bearer ${login.body.data.token}`)
       .send({
         name: 'Updated Name',
@@ -115,12 +117,12 @@ describe('auth', () => {
     expect(updated.body.data.user.interests).toEqual(['reading']);
 
     const oldLogin = await request(app)
-      .post('/api/auth/login')
+      .post('/api/v1/auth/login')
       .send({ email: user.email, password: 'Password123!' });
     expect(oldLogin.status).toBe(401);
 
     const newLogin = await request(app)
-      .post('/api/auth/login')
+      .post('/api/v1/auth/login')
       .send({ email: user.email, password: 'NewPassword123!' });
     expect(newLogin.status).toBe(200);
   });

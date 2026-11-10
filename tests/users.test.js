@@ -18,12 +18,12 @@ describe('admin user management', () => {
     await createUser({ name: 'Third', email: 'third@example.com' });
 
     const forbidden = await request(app)
-      .get('/api/users')
+      .get('/api/v1/users')
       .set('Authorization', authHeader(first));
     expect(forbidden.status).toBe(403);
 
     const res = await request(app)
-      .get('/api/users?page=1&limit=2')
+      .get('/api/v1/users?page=1&limit=2')
       .set('Authorization', authHeader(admin));
 
     expect(res.status).toBe(200);
@@ -31,7 +31,7 @@ describe('admin user management', () => {
     expect(res.body.meta).toMatchObject({ page: 1, limit: 2, total: 4, pages: 2 });
 
     const page2 = await request(app)
-      .get('/api/users?page=2&limit=2')
+      .get('/api/v1/users?page=2&limit=2')
       .set('Authorization', authHeader(admin));
 
     expect(page2.body.data).toHaveLength(2);
@@ -45,7 +45,7 @@ describe('admin user management', () => {
     const admin = await createAdmin();
 
     const created = await request(app)
-      .post('/api/users')
+      .post('/api/v1/users')
       .set('Authorization', authHeader(admin))
       .send({
         name: 'Managed',
@@ -61,7 +61,7 @@ describe('admin user management', () => {
     const id = created.body.data._id;
 
     const updated = await request(app)
-      .patch(`/api/users/${id}`)
+      .patch(`/api/v1/users/${id}`)
       .set('Authorization', authHeader(admin))
       .send({ name: 'Managed Updated', role: 'user', interests: ['Reading', 'chess'] });
 
@@ -70,7 +70,7 @@ describe('admin user management', () => {
     expect(updated.body.data.interests).toEqual(['reading', 'chess']);
 
     const removed = await request(app)
-      .delete(`/api/users/${id}`)
+      .delete(`/api/v1/users/${id}`)
       .set('Authorization', authHeader(admin));
 
     expect(removed.status).toBe(204);
@@ -85,7 +85,7 @@ describe('admin user management', () => {
     await Post.create({ title: 'Post', content: 'Body', author: user._id });
 
     const res = await request(app)
-      .delete(`/api/users/${user.id}`)
+      .delete(`/api/v1/users/${user.id}`)
       .set('Authorization', authHeader(admin));
 
     expect(res.status).toBe(204);
@@ -97,12 +97,12 @@ describe('admin user management', () => {
     const admin = await createAdmin();
 
     const deleteSelf = await request(app)
-      .delete(`/api/users/${admin.id}`)
+      .delete(`/api/v1/users/${admin.id}`)
       .set('Authorization', authHeader(admin));
     expect(deleteSelf.status).toBe(400);
 
     const demoteSelf = await request(app)
-      .patch(`/api/users/${admin.id}`)
+      .patch(`/api/v1/users/${admin.id}`)
       .set('Authorization', authHeader(admin))
       .send({ role: 'user' });
     expect(demoteSelf.status).toBe(400);
@@ -117,7 +117,7 @@ describe('admin user management', () => {
     const spy = vi.spyOn(User, 'aggregate');
 
     const res = await request(app)
-      .get('/api/users/grouped-by-interests?page=1&limit=2')
+      .get('/api/v1/users/grouped-by-interests?page=1&limit=2')
       .set('Authorization', authHeader(admin));
 
     expect(res.status).toBe(200);
@@ -140,12 +140,12 @@ describe('admin user management', () => {
     await createUser({ interests: ['running'] });
 
     const forbidden = await request(app)
-      .get('/api/users/grouped-by-interests')
+      .get('/api/v1/users/grouped-by-interests')
       .set('Authorization', authHeader(user));
     expect(forbidden.status).toBe(403);
 
     const res = await request(app)
-      .get('/api/users/grouped-by-interests?interest=chess')
+      .get('/api/v1/users/grouped-by-interests?interest=chess')
       .set('Authorization', authHeader(admin));
 
     expect(res.status).toBe(200);
@@ -157,12 +157,12 @@ describe('admin user management', () => {
     const admin = await createAdmin();
 
     const invalid = await request(app)
-      .get('/api/users/not-an-id')
+      .get('/api/v1/users/not-an-id')
       .set('Authorization', authHeader(admin));
     expect(invalid.status).toBe(400);
 
     const missing = await request(app)
-      .get('/api/users/64b7f9c2f1a2b3c4d5e6f7a8')
+      .get('/api/v1/users/64b7f9c2f1a2b3c4d5e6f7a8')
       .set('Authorization', authHeader(admin));
     expect(missing.status).toBe(404);
   });

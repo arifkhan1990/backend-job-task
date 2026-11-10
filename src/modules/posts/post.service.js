@@ -1,5 +1,5 @@
-import { Post } from '../../models/Post.js';
+import { postRepository } from './post.repository.js';
 
 export async function createPost(authorId, data) {
-  return Post.create({ ...data, author: authorId });
+  return postRepository.create({ ...data, author: authorId });
 }

@@ -6,7 +6,7 @@ import { authHeader, createUser } from './helpers.js';
 
 const createPost = (token, overrides = {}) =>
   request(app)
-    .post('/api/posts')
+    .post('/api/v1/posts')
     .set('Authorization', token)
     .send({ title: 'Post', content: 'Body', ...overrides });
 
@@ -39,7 +39,7 @@ describe('posts', () => {
     const spy = vi.spyOn(User, 'aggregate');
 
     const res = await request(app).get(
-      `/api/users/${alice.id}/posts?page=1&limit=1`,
+      `/api/v1/users/${alice.id}/posts?page=1&limit=1`,
     );
 
     expect(res.status).toBe(200);
@@ -55,11 +55,11 @@ describe('posts', () => {
 
   it('returns 404 for an unknown user and 400 for bad ids', async () => {
     const notFound = await request(app).get(
-      '/api/users/64b7f9c2f1a2b3c4d5e6f7a8/posts',
+      '/api/v1/users/64b7f9c2f1a2b3c4d5e6f7a8/posts',
     );
     expect(notFound.status).toBe(404);
 
-    const bad = await request(app).get('/api/users/nope/posts');
+    const bad = await request(app).get('/api/v1/users/nope/posts');
     expect(bad.status).toBe(400);
   });
 
@@ -67,13 +67,13 @@ describe('posts', () => {
     const user = await createUser();
 
     const unauthorized = await request(app)
-      .post('/api/posts')
+      .post('/api/v1/posts')
       .send({ title: 'No', content: 'Auth' });
     expect(unauthorized.status).toBe(401);
 
     await createPost(authHeader(user));
 
-    const publicRead = await request(app).get(`/api/users/${user.id}/posts`);
+    const publicRead = await request(app).get(`/api/v1/users/${user.id}/posts`);
     expect(publicRead.status).toBe(200);
     expect(publicRead.body.data.posts).toHaveLength(1);
   });
