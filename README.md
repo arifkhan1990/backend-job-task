@@ -199,6 +199,7 @@ Refresh tokens are random 384-bit values. Only their SHA-256 hashes are stored. 
 | `GET` | `/users/:id` | Admin | Single user |
 | `PATCH` | `/users/:id` | Admin | Partial update |
 | `DELETE` | `/users/:id` | Admin | Deletes the user's notes and posts too |
+| `POST` | `/users/bulk-delete` | Admin | Deletes up to 100 users and their content |
 | `GET` | `/users/grouped-by-interests` | Admin | Aggregation view, paginated groups |
 | `GET` | `/users/:id/posts` | Public | `$lookup` view, paginated posts |
 
@@ -481,7 +482,7 @@ The suite uses Vitest and Supertest against a real MongoDB replica set, plus uni
 - CSRF enforcement on refresh/logout and cookie flags.
 - Health and readiness endpoints.
 - Admin-only route protection.
-- User CRUD and cascade deletion of notes/posts/refresh tokens.
+- User CRUD, bulk delete and cascade deletion of notes/posts/refresh tokens.
 - Note ownership isolation and admin read access.
 - Pagination metadata and page boundaries.
 - The exact custom index inventory for each model, including the refresh-token TTL index.

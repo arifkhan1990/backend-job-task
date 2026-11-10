@@ -45,6 +45,11 @@ export const noteRepository = {
     return session ? Note.deleteMany(filter, { session }) : Note.deleteMany(filter);
   },
 
+  deleteByOwners(ownerIds, { session } = {}) {
+    const filter = { owner: { $in: ownerIds } };
+    return session ? Note.deleteMany(filter, { session }) : Note.deleteMany(filter);
+  },
+
   deleteManyByIds(ids, { session } = {}) {
     const filter = { _id: { $in: ids } };
     return session ? Note.deleteMany(filter, { session }) : Note.deleteMany(filter);

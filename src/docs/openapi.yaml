@@ -195,6 +195,40 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  /users/bulk-delete:
+    post:
+      tags: [Users]
+      summary: Delete multiple users (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkDeleteUsersRequest'
+      responses:
+        '200':
+          description: Number of deleted users
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      deleted:
+                        type: integer
+        '400':
+          description: Self-delete, last-admin protection or validation failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /users/grouped-by-interests:
     get:
       tags: [Users]
@@ -676,6 +710,17 @@ components:
           type: array
           items:
             type: string
+    BulkDeleteUsersRequest:
+      type: object
+      required: [ids]
+      properties:
+        ids:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: string
+            pattern: '^[0-9a-fA-F]{24}$'
     NoteInput:
       type: object
       required: [title, content]

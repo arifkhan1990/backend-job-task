@@ -50,6 +50,13 @@ export const refreshTokenRepository = {
       : RefreshToken.deleteMany(filter);
   },
 
+  deleteByUsers(userIds, { session } = {}) {
+    const filter = { user: { $in: userIds } };
+    return session
+      ? RefreshToken.deleteMany(filter, { session })
+      : RefreshToken.deleteMany(filter);
+  },
+
   deleteByHash(tokenHash) {
     return RefreshToken.deleteOne({ tokenHash });
   },

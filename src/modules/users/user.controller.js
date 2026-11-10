@@ -31,6 +31,12 @@ export const remove = asyncHandler(async (req, res) => {
   res.status(204).send();
 });
 
+export const bulkRemove = asyncHandler(async (req, res) => {
+  const deleted = await userService.bulkDeleteUsers(req.body.ids, req.user.id);
+
+  res.json({ data: { deleted } });
+});
+
 export const groupedByInterests = asyncHandler(async (req, res) => {
   const { groups, meta } = await userService.groupUsersByInterests(req.query);
 
