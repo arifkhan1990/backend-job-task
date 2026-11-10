@@ -458,7 +458,7 @@ See [`docs/performance.md`](docs/performance.md) for the reproducible `EXPLAIN` 
 - The access token contains only `sub` and `role`. The account is re-fetched on every authenticated request, so deleting a user or changing a role takes effect immediately.
 - Refresh tokens are 384-bit random values stored only as SHA-256 hashes. They rotate on every refresh, expire after 7 days by default, and are delivered in an `HttpOnly` cookie. Reuse of a revoked token revokes every active session for that user.
 - Refresh and logout use a double-submit CSRF token (`csrf_token` cookie + `X-CSRF-Token` header) with a timing-safe comparison.
-- Login/register are limited to 20 requests per 15 minutes per IP; refresh/CSRF/logout have a separate 120-per-15-minute session budget; the API is limited to 120 requests per minute.
+- In production, login/register are limited to 20 requests per 15 minutes per IP; refresh/CSRF/logout have a separate 300-per-15-minute session budget; the API is limited to 120 requests per minute. Development and test runs skip these limits so local reloads are not throttled.
 - Helmet sets security headers, CORS uses an explicit allowlist with credentials, and JSON bodies are capped at 100 KB.
 - Zod validates bodies, query strings and route parameters before they reach a service.
 - Ownership checks return `404` for another user's note rather than revealing that it exists.
