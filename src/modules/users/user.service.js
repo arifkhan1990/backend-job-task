@@ -1,31 +1,38 @@
-import mongoose from 'mongoose';
-import { Note } from '../../models/Note.js';
-import { Post } from '../../models/Post.js';
-import { User } from '../../models/User.js';
+import { noteRepository } from '../notes/note.repository.js';
+import { postRepository } from '../posts/post.repository.js';
+import { refreshTokenRepository } from '../auth/refresh-token.repository.js';
 import { ApiError } from '../../utils/ApiError.js';
+import { audit } from '../../utils/audit.js';
 import { getPagination, paginationMeta } from '../../utils/pagination.js';
+import { withTransaction } from '../../utils/transaction.js';
+import { userRepository } from './user.repository.js';
 
 export async function listUsers({ page, limit }) {
   const { skip } = getPagination({ page, limit });
 
   const [users, total] = await Promise.all([
-    User.find()
-      .sort({ createdAt: -1, _id: -1 })
-      .skip(skip)
-      .limit(limit)
-      .lean(),
-    User.countDocuments(),
+    userRepository.list({ skip, limit }),
+    userRepository.count(),
   ]);
 
   return { users, meta: paginationMeta({ page, limit, total }) };
 }
 
-export async function createUser(data) {
-  return User.create(data);
+export async function createUser(data, actorId) {
+  const user = await userRepository.create(data);
+
+  audit({
+    action: 'user.create',
+    actorId,
+    targetId: user.id,
+    role: user.role,
+  });
+
+  return user;
 }
 
 export async function getUserById(id) {
-  const user = await User.findById(id);
+  const user = await userRepository.findById(id);
 
   if (!user) {
     throw new ApiError(404, 'User not found');
@@ -35,100 +42,132 @@ export async function getUserById(id) {
 }
 
 export async function updateUser(id, updates, actorId) {
-  const user = await User.findById(id);
+  const user = await withTransaction(async (session) => {
+    const existing = await userRepository.findById(id, { session });
 
-  if (!user) {
-    throw new ApiError(404, 'User not found');
-  }
-
-  if (updates.role && updates.role !== user.role) {
-    if (user.id === actorId) {
-      throw new ApiError(400, 'You cannot change your own role');
+    if (!existing) {
+      throw new ApiError(404, 'User not found');
     }
 
-    if (user.role === 'admin') {
-      const adminCount = await User.countDocuments({ role: 'admin' });
+    const roleChanged = Boolean(updates.role && updates.role !== existing.role);
 
-      if (adminCount <= 1) {
-        throw new ApiError(400, 'Cannot demote the last admin');
+    if (roleChanged) {
+      if (existing.id === actorId) {
+        throw new ApiError(400, 'You cannot change your own role', undefined, 'SELF_ROLE_CHANGE');
+      }
+
+      if (existing.role === 'admin') {
+        const adminCount = await userRepository.countAdmins({ session });
+
+        if (adminCount <= 1) {
+          throw new ApiError(400, 'Cannot demote the last admin', undefined, 'LAST_ADMIN');
+        }
       }
     }
-  }
 
-  Object.assign(user, updates);
-  await user.save();
+    Object.assign(existing, updates);
+    await userRepository.save(existing, { session });
+
+    if (updates.password || roleChanged) {
+      await refreshTokenRepository.revokeAllForUser(existing._id, { session });
+    }
+
+    return existing;
+  });
+
+  audit({
+    action: 'user.update',
+    actorId,
+    targetId: user.id,
+    changedFields: Object.keys(updates),
+  });
 
   return user;
 }
 
 export async function deleteUser(id, actorId) {
   if (id === actorId) {
-    throw new ApiError(400, 'You cannot delete your own account');
+    throw new ApiError(400, 'You cannot delete your own account', undefined, 'SELF_DELETE');
   }
 
-  const user = await User.findById(id);
+  const user = await withTransaction(async (session) => {
+    const existing = await userRepository.findById(id, { session });
 
-  if (!user) {
-    throw new ApiError(404, 'User not found');
-  }
-
-  if (user.role === 'admin') {
-    const adminCount = await User.countDocuments({ role: 'admin' });
-
-    if (adminCount <= 1) {
-      throw new ApiError(400, 'Cannot delete the last admin');
+    if (!existing) {
+      throw new ApiError(404, 'User not found');
     }
-  }
 
-  await user.deleteOne();
+    if (existing.role === 'admin') {
+      const adminCount = await userRepository.countAdmins({ session });
 
-  // Keep the database consistent after removing an account. MongoDB transactions
-  // require a replica set, so these deletes are intentionally sequential and simple.
-  await Promise.all([
-    Note.deleteMany({ owner: user._id }),
-    Post.deleteMany({ author: user._id }),
-  ]);
+      if (adminCount <= 1) {
+        throw new ApiError(400, 'Cannot delete the last admin', undefined, 'LAST_ADMIN');
+      }
+    }
+
+    await userRepository.deleteById(id, { session });
+    await noteRepository.deleteByOwner(existing._id, { session });
+    await postRepository.deleteByAuthor(existing._id, { session });
+    await refreshTokenRepository.deleteByUser(existing._id, { session });
+
+    return existing;
+  });
+
+  audit({
+    action: 'user.delete',
+    actorId,
+    targetId: user.id,
+    role: user.role,
+  });
 
   return user;
 }
 
-export async function groupUsersByInterests({ page, limit, interest }) {
-  const { skip } = getPagination({ page, limit });
-  const pipeline = [];
-
-  if (interest) {
-    pipeline.push({ $match: { interests: interest } });
+export async function bulkDeleteUsers(ids, actorId) {
+  if (ids.includes(actorId)) {
+    throw new ApiError(400, 'You cannot delete your own account', undefined, 'SELF_DELETE');
   }
 
-  pipeline.push(
-    { $unwind: '$interests' },
-    {
-      $group: {
-        _id: '$interests',
-        userCount: { $sum: 1 },
-        users: { $push: { _id: '$_id', name: '$name' } },
-      },
-    },
-    { $sort: { _id: 1 } },
-    {
-      $project: {
-        _id: 0,
-        interest: '$_id',
-        userCount: 1,
-        users: 1,
-      },
-    },
-    {
-      $facet: {
-        data: [{ $skip: skip }, { $limit: limit }],
-        meta: [{ $count: 'total' }],
-      },
-    },
-  );
+  const deleted = await withTransaction(async (session) => {
+    const users = await userRepository.findByIds(ids, { session });
+
+    if (users.length !== ids.length) {
+      throw new ApiError(404, 'One or more users not found');
+    }
+
+    if (users.some((user) => user.role === 'admin')) {
+      const remainingAdmins = await userRepository.countAdminsExcluding(ids, { session });
+
+      if (remainingAdmins < 1) {
+        throw new ApiError(400, 'Cannot delete the last admin', undefined, 'LAST_ADMIN');
+      }
+    }
+
+    const userIds = users.map((user) => user._id);
+
+    await userRepository.deleteManyByIds(userIds, { session });
+    await noteRepository.deleteByOwners(userIds, { session });
+    await postRepository.deleteByAuthors(userIds, { session });
+    await refreshTokenRepository.deleteByUsers(userIds, { session });
+
+    return users.length;
+  });
+
+  audit({
+    action: 'user.bulk_delete',
+    actorId,
+    count: deleted,
+  });
+
+  return deleted;
+}
+
+export async function groupUsersByInterests({ page, limit, interest }) {
+  const { skip } = getPagination({ page, limit });
 
   // This is the single aggregate() call for the interests view. Pagination and
   // the total count are produced inside the same pipeline with $facet.
-  const [result] = await User.aggregate(pipeline);
+  const [result] = await userRepository.groupByInterests({ skip, limit, interest });
 
   return {
     groups: result?.data ?? [],
@@ -144,43 +183,8 @@ export async function getUserPosts(userId, { page, limit }) {
   const { skip } = getPagination({ page, limit });
 
   // One aggregate() with one $lookup. The lookup uses posts.author and the
-  // compound index supports the inner sort. $facet keeps the lookup output
-  // limited to the requested page plus the total count.
-  const [result] = await User.aggregate([
-    { $match: { _id: new mongoose.Types.ObjectId(userId) } },
-    {
-      $lookup: {
-        from: 'posts',
-        localField: '_id',
-        foreignField: 'author',
-        pipeline: [
-          { $sort: { createdAt: -1, _id: -1 } },
-          {
-            $facet: {
-              data: [{ $skip: skip }, { $limit: limit }],
-              meta: [{ $count: 'total' }],
-            },
-          },
-        ],
-        as: 'postPage',
-      },
-    },
-    {
-      $project: {
-        _id: 1,
-        name: 1,
-        page: { $arrayElemAt: ['$postPage', 0] },
-      },
-    },
-    {
-      $project: {
-        _id: 1,
-        name: 1,
-        posts: { $ifNull: ['$page.data', []] },
-        totalPosts: { $ifNull: [{ $arrayElemAt: ['$page.meta.total', 0] }, 0] },
-      },
-    },
-  ]);
+  // compound index supports the inner sort.
+  const [result] = await userRepository.findPostsByUser(userId, { skip, limit });
 
   if (!result) {
     throw new ApiError(404, 'User not found');

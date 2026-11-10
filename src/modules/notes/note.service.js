@@ -1,9 +1,9 @@
-import { Note } from '../../models/Note.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { getPagination, paginationMeta } from '../../utils/pagination.js';
+import { noteRepository } from './note.repository.js';
 
 export async function createNote(ownerId, data) {
-  return Note.create({ ...data, owner: ownerId });
+  return noteRepository.create({ ...data, owner: ownerId });
 }
 
 export async function listNotes({ user, page, limit, ownerId }) {
@@ -17,13 +17,8 @@ export async function listNotes({ user, page, limit, ownerId }) {
   const { skip } = getPagination({ page, limit });
 
   const [notes, total] = await Promise.all([
-    Note.find(filter)
-      .sort({ createdAt: -1, _id: -1 })
-      .skip(skip)
-      .limit(limit)
-      .populate('owner', 'name email')
-      .lean(),
-    Note.countDocuments(filter),
+    noteRepository.list(filter, { skip, limit }),
+    noteRepository.count(filter),
   ]);
 
   return { notes, meta: paginationMeta({ page, limit, total }) };
@@ -31,7 +26,7 @@ export async function listNotes({ user, page, limit, ownerId }) {
 
 export async function getNote(id, user) {
   const filter = user.role === 'admin' ? { _id: id } : { _id: id, owner: user.id };
-  const note = await Note.findOne(filter).populate('owner', 'name email').lean();
+  const note = await noteRepository.findOne(filter);
 
   if (!note) {
     throw new ApiError(404, 'Note not found');
@@ -41,12 +36,7 @@ export async function getNote(id, user) {
 }
 
 export async function updateNote(id, ownerId, updates) {
-  const note = await Note.findOneAndUpdate({ _id: id, owner: ownerId }, updates, {
-    new: true,
-    runValidators: true,
-  })
-    .populate('owner', 'name email')
-    .lean();
+  const note = await noteRepository.updateOne({ _id: id, owner: ownerId }, updates);
 
   if (!note) {
     throw new ApiError(404, 'Note not found');
@@ -56,7 +46,7 @@ export async function updateNote(id, ownerId, updates) {
 }
 
 export async function deleteNote(id, ownerId) {
-  const note = await Note.findOneAndDelete({ _id: id, owner: ownerId }).lean();
+  const note = await noteRepository.deleteOne({ _id: id, owner: ownerId });
 
   if (!note) {
     throw new ApiError(404, 'Note not found');

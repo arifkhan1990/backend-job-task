@@ -8,7 +8,7 @@ export const list = asyncHandler(async (req, res) => {
 });
 
 export const create = asyncHandler(async (req, res) => {
-  const user = await userService.createUser(req.body);
+  const user = await userService.createUser(req.body, req.user.id);
 
   res.status(201).json({ data: user.toJSON() });
 });
@@ -29,6 +29,12 @@ export const remove = asyncHandler(async (req, res) => {
   await userService.deleteUser(req.params.id, req.user.id);
 
   res.status(204).send();
+});
+
+export const bulkRemove = asyncHandler(async (req, res) => {
+  const deleted = await userService.bulkDeleteUsers(req.body.ids, req.user.id);
+
+  res.json({ data: { deleted } });
 });
 
 export const groupedByInterests = asyncHandler(async (req, res) => {

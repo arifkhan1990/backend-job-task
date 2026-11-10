@@ -9,7 +9,7 @@ export const validate = (schema, source = 'body') => (req, _res, next) => {
       message: issue.message,
     }));
 
-    return next(new ApiError(400, 'Validation failed', details));
+    return next(new ApiError(400, 'Validation failed', details, 'VALIDATION_ERROR'));
   }
 
   req[source] = result.data;

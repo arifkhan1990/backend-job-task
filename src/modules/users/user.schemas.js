@@ -44,3 +44,11 @@ export const userPostsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
+
+export const bulkDeleteUsersSchema = z.object({
+  ids: z
+    .array(objectId)
+    .min(1, 'Select at least one user')
+    .max(100, 'You can delete at most 100 users at a time')
+    .transform((ids) => [...new Set(ids)]),
+});
