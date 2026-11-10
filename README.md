@@ -511,6 +511,8 @@ The Compose stack starts MongoDB as a single-node replica set, waits for it to b
 
 Set `CORS_ORIGIN` to the frontend origin when running the two containers together. In production behind HTTPS, set `COOKIE_SECURE=true` and use the appropriate `COOKIE_SAME_SITE` value (`none` for a cross-site frontend, `lax` for same-site).
 
+The production image/release flow is documented in [`deploy/README.md`](deploy/README.md). The release workflow publishes `ghcr.io/arifkhan1990/backend-job-task` on `v*` tags; the deploy job is opt-in via repository variables and secrets.
+
 ---
 
 ## Design decisions and trade-offs
