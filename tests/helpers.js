@@ -20,3 +20,15 @@ export async function createAdmin(overrides = {}) {
 export function authHeader(user) {
   return `Bearer ${signToken(user)}`;
 }
+
+export function cookieValue(response, name) {
+  const cookies = response.headers['set-cookie'] || [];
+  const cookie = cookies.find((item) => item.startsWith(`${name}=`));
+
+  if (!cookie) {
+    return null;
+  }
+
+  return cookie.split(';')[0].slice(name.length + 1);
+}
+

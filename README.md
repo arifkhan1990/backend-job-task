@@ -10,7 +10,8 @@ The companion frontend is in [`frontend-job-task`](https://github.com/arifkhan19
 
 ## Features
 
-- JWT authentication with issuer/audience validation and a 1-hour expiry.
+- Short-lived JWT access tokens with issuer/audience validation.
+- Rotating, hashed refresh tokens in an `HttpOnly` cookie, plus CSRF protection.
 - Password hashing with bcrypt (configurable cost, default 12).
 - Two roles: `user` and `admin`, enforced at the route and query level.
 - Notes CRUD with strict ownership rules.
@@ -114,9 +115,12 @@ npm run check        # lint + tests
 | `JWT_SECRET` | ✅ | — | HS256 signing key, at least 32 characters |
 | `PORT` |  | `5000` | HTTP port |
 | `NODE_ENV` |  | `development` | `development`, `test` or `production` |
-| `JWT_EXPIRES_IN` |  | `1h` | Access-token lifetime |
+| `JWT_EXPIRES_IN` |  | `15m` | Short-lived access-token lifetime |
 | `JWT_ISSUER` |  | `notes-api` | Verified `iss` claim |
 | `JWT_AUDIENCE` |  | `notes-client` | Verified `aud` claim |
+| `REFRESH_TOKEN_TTL_DAYS` |  | `7` | Refresh-token lifetime |
+| `COOKIE_SECURE` |  | `true` in production | Refresh/CSRF cookie `Secure` flag |
+| `COOKIE_SAME_SITE` |  | `none` in production, `lax` otherwise | Cookie `SameSite` policy |
 | `CORS_ORIGIN` |  | `http://localhost:5173` | Comma-separated allowed origins |
 | `BCRYPT_ROUNDS` |  | `12` | bcrypt cost factor |
 | `ADMIN_NAME` |  | `Administrator` | Seed script only |
@@ -132,22 +136,34 @@ npm run check        # lint + tests
 
 Base URL: `http://localhost:5000/api/v1`
 
-All protected routes expect:
+All protected routes expect a short-lived access token:
 
 ```http
-Authorization: Bearer <jwt>
+Authorization: Bearer <accessToken>
 ```
+
+Login and registration also set two cookies:
+
+- `refresh_token`: `HttpOnly`, `Secure` in production, `SameSite` configurable, scoped to `/api/v1/auth`.
+- `csrf_token`: readable by the SPA, used for the double-submit CSRF check.
+
+Refresh and logout require the `X-CSRF-Token` header to match the `csrf_token` cookie.
 
 ### Auth
 
 | Method | Path | Access | Body / notes |
 | --- | --- | --- | --- |
-| `POST` | `/auth/register` | Public | `name`, `email`, `password`, `interests[]` |
-| `POST` | `/auth/login` | Public | `email`, `password` |
+| `GET` | `/auth/csrf` | Public | Issues/rotates the CSRF cookie and returns the token |
+| `POST` | `/auth/register` | Public | `name`, `email`, `password`, `interests[]`; returns access token + sets cookies |
+| `POST` | `/auth/login` | Public | `email`, `password`; returns access token + sets cookies |
+| `POST` | `/auth/refresh` | Refresh cookie + CSRF | Rotates the refresh token and returns a new access token |
+| `POST` | `/auth/logout` | Refresh cookie + CSRF | Revokes the refresh token and clears cookies |
 | `GET` | `/auth/me` | Authenticated | — |
-| `PATCH` | `/auth/me` | Authenticated | `name?`, `interests?`, `password?` |
+| `PATCH` | `/auth/me` | Authenticated | `name?`, `interests?`, `password?`; password change revokes all refresh tokens |
 
 Registration always creates a `user`; the `role` field cannot be escalated through the public endpoint.
+
+Refresh tokens are random 384-bit values. Only their SHA-256 hashes are stored. Every refresh rotates the token, and reusing an already-revoked token revokes every active session for that user.
 
 ### Users (admin)
 
@@ -230,13 +246,13 @@ curl -X POST http://localhost:5000/api/v1/auth/register \
   -d '{"name":"Alice","email":"alice@example.com","password":"Password123!","interests":["chess","reading"]}'
 ```
 
-Login and store the token:
+Login, store the short-lived access token and keep the refresh cookie in a jar:
 
 ```bash
-TOKEN=$(curl -s -X POST http://localhost:5000/api/v1/auth/login \
+TOKEN=$(curl -s -c cookies.txt -X POST http://localhost:5000/api/v1/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"alice@example.com","password":"Password123!"}' \
-  | node -pe 'JSON.parse(require("fs").readFileSync(0)).data.token')
+  | node -pe 'JSON.parse(require("fs").readFileSync(0)).data.accessToken')
 ```
 
 Create and list notes:
@@ -271,6 +287,11 @@ Indexes are declared with `schema.index()` in `src/models/` so they are visible 
 | `notes` | `{ owner: 1, createdAt: -1, _id: -1 }` | A user's note list; admin filtering by owner |
 | `notes` | `{ createdAt: -1, _id: -1 }` | Admin all-notes list |
 | `posts` | `{ author: 1, createdAt: -1, _id: -1 }` | `$lookup` author match plus inner post sort |
+| `refreshtokens` | `{ tokenHash: 1 }` unique | Refresh lookup and replay protection |
+| `refreshtokens` | `{ user: 1, createdAt: -1 }` | Revoke-all on logout/password change/role change |
+| `refreshtokens` | `{ expiresAt: 1 }` TTL | Automatic cleanup of expired tokens |
+
+The refresh-token indexes are security infrastructure, not part of the assignment's note/user/post index strategy. They do not change the six task indexes.
 
 ### Why these indexes
 
@@ -280,6 +301,7 @@ Indexes are declared with `schema.index()` in `src/models/` so they are visible 
 - **`notes.createdAt + _id`** supports the admin view that spans all owners.
 - **`posts.author + createdAt + _id`** is the foreign-field index used by `$lookup`. It also supports the inner sort.
 - **`users.interests`** is a multikey index used by the optional `?interest=` equality filter before `$unwind`.
+- **`refreshtokens.tokenHash`** is unique so a token can be looked up in one read and cannot be duplicated. The `user + createdAt` index supports revoke-all operations; the TTL index removes expired rows.
 
 ### What is deliberately not indexed
 
@@ -373,13 +395,16 @@ The lookup uses the `posts.author` portion of the compound index. The inner `$so
 
 - Passwords are hashed with bcrypt at cost 12 by default. The hash is `select: false` and is removed by the JSON transform, so it never appears in a response.
 - Passwords longer than 72 bytes are rejected at validation; bcrypt does not use bytes beyond that limit.
-- JWTs use HS256, a required 32+ character secret, a 1-hour expiry, and verified `issuer`/`audience` claims.
-- The token contains only `sub` and `role`. The account is re-fetched on every authenticated request, so deleting a user or changing a role takes effect immediately.
+- Access JWTs use HS256, a required 32+ character secret, a 15-minute expiry, and verified `issuer`/`audience` claims.
+- The access token contains only `sub` and `role`. The account is re-fetched on every authenticated request, so deleting a user or changing a role takes effect immediately.
+- Refresh tokens are 384-bit random values stored only as SHA-256 hashes. They rotate on every refresh, expire after 7 days by default, and are delivered in an `HttpOnly` cookie. Reuse of a revoked token revokes every active session for that user.
+- Refresh and logout use a double-submit CSRF token (`csrf_token` cookie + `X-CSRF-Token` header) with a timing-safe comparison.
 - Auth routes are limited to 20 requests per 15 minutes per IP; the API is limited to 120 requests per minute.
-- Helmet sets security headers, CORS uses an explicit allowlist, and JSON bodies are capped at 100 KB.
+- Helmet sets security headers, CORS uses an explicit allowlist with credentials, and JSON bodies are capped at 100 KB.
 - Zod validates bodies, query strings and route parameters before they reach a service.
 - Ownership checks return `404` for another user's note rather than revealing that it exists.
 - Admins cannot delete their own account or change their own role. The service also blocks demoting or deleting the last admin.
+- Password changes, role changes, account deletion and logout revoke refresh tokens.
 - Secrets are read from environment variables and are never committed.
 
 ---
@@ -393,12 +418,14 @@ npm test
 The suite uses Vitest, Supertest and a real MongoDB database. It covers:
 
 - Registration, login, duplicate emails, token failures and profile updates.
-- Password rotation and hash non-disclosure.
+- Access-token expiry handling and hash non-disclosure.
+- Refresh-token rotation, reuse detection, logout revocation and password-change revocation.
+- CSRF enforcement on refresh/logout and cookie flags.
 - Admin-only route protection.
-- User CRUD and cascade deletion of notes/posts.
+- User CRUD and cascade deletion of notes/posts/refresh tokens.
 - Note ownership isolation and admin read access.
 - Pagination metadata and page boundaries.
-- The exact custom index inventory for each model.
+- The exact custom index inventory for each model, including the refresh-token TTL index.
 - The interests aggregation (including a spy that asserts a single `aggregate()` call).
 - The posts `$lookup` aggregation (single `$lookup`, sorted and paginated).
 
@@ -425,8 +452,8 @@ Set `CORS_ORIGIN` to the frontend origin when running the two containers togethe
 
 ## Design decisions and trade-offs
 
-- **Access token only, no refresh token.** This keeps the auth surface small and the task focused. The frontend logs the user out when a token expires. Production would add refresh-token rotation and a revocation store.
+- **Short access token + rotating refresh token.** Access tokens live for 15 minutes; refresh tokens are hashed, rotated and revocable. The frontend refreshes silently and logs out when refresh fails.
 - **Offset pagination.** It is simple and gives page numbers. Very deep pages still pay a `skip` cost; cursor pagination on `_id` would be the next step for large datasets.
-- **Cascade deletes are not transactional.** Transactions need a replica set. The user is deleted first, then their notes and posts; the trade-off is documented rather than hidden.
+- **Cascade deletes are not transactional yet.** Transactions require a replica set; the repo uses one in Docker/CI, and the cascade will be wrapped in a transaction in the hardening task.
 - **Admin can read but not mutate other users' notes.** This matches the permission table: admins manage users and view everyone's notes, while note mutation stays with the owner.
 - **Grouped interests returns the full member list per group.** Pagination is at the group level. At large scale, member lists would be capped or paginated separately.
