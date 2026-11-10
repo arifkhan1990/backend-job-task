@@ -120,8 +120,9 @@ npm run migrate:down  # revert model-defined indexes (destructive)
 npm run seed:admin    # create/promote admin
 npm run explain       # seed a scratch DB and print EXPLAIN plans
 npm run lint          # ESLint
-npm test              # integration tests
+npm test              # unit + integration tests
 npm run check         # lint + tests
+npm run verify        # rules-kit gate: hygiene, install, lint, tests, audit
 ```
 
 API documentation is available at `http://localhost:5000/api/docs` (Swagger UI) and the raw spec at `http://localhost:5000/api/openapi.yaml`.
@@ -472,7 +473,7 @@ See [`docs/performance.md`](docs/performance.md) for the reproducible `EXPLAIN` 
 npm test
 ```
 
-The suite uses Vitest, Supertest and a real MongoDB database. It covers:
+The suite uses Vitest and Supertest against a real MongoDB replica set, plus unit tests for pure logic and service edge cases. It covers:
 
 - Registration, login, duplicate emails, token failures and profile updates.
 - Access-token expiry handling and hash non-disclosure.
@@ -486,8 +487,11 @@ The suite uses Vitest, Supertest and a real MongoDB database. It covers:
 - The exact custom index inventory for each model, including the refresh-token TTL index.
 - The interests aggregation (including a spy that asserts a single `aggregate()` call).
 - The posts `$lookup` aggregation (single `$lookup`, sorted and paginated).
+- Unit coverage for pagination, token hashing and auth-service reuse/rotation branches.
 
-Tests use `MONGODB_URI_TEST` when set, otherwise `mongodb://127.0.0.1:27017/notes_api_test?replicaSet=rs0`. The GitHub Actions workflow starts a MongoDB 7 single-node replica set and runs `npm run lint` plus `npm test`.
+Tests use `MONGODB_URI_TEST` when set, otherwise `mongodb://127.0.0.1:27017/notes_api_test?replicaSet=rs0`. The GitHub Actions workflow starts a MongoDB 7 single-node replica set, initiates it, runs the repo-hygiene check, applies migrations, runs lint/tests and runs `npm audit --omit=dev --audit-level=high`.
+
+`npm run verify` runs the same gate locally: repo hygiene, `npm ci`, lint, tests and the production dependency audit.
 
 ---
 
