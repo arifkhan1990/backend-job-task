@@ -1,16 +1,17 @@
 import { app } from './app.js';
 import { connectDB, disconnectDB } from './config/db.js';
 import { env } from './config/env.js';
+import { logger } from './config/logger.js';
 
 async function start() {
   await connectDB(env.mongoUri);
 
   const server = app.listen(env.port, () => {
-    console.log(`API listening on port ${env.port}`);
+    logger.info({ port: env.port }, 'API listening');
   });
 
   const shutdown = (signal) => {
-    console.log(`${signal} received, shutting down`);
+    logger.info({ signal }, 'Shutting down');
 
     server.close(async () => {
       await disconnectDB();
@@ -23,6 +24,6 @@ async function start() {
 }
 
 start().catch((error) => {
-  console.error('Failed to start server', error);
+  logger.error({ err: error }, 'Failed to start server');
   process.exit(1);
 });

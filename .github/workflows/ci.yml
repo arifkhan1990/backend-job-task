@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
 
 jobs:
@@ -15,7 +15,9 @@ jobs:
         ports:
           - 27017:27017
         options: >-
-          --health-cmd "mongosh --quiet --eval \"db.runCommand({ ping: 1 }).ok\""
+          --replSet rs0
+          --bind_ip_all
+          --health-cmd "mongosh --quiet --eval \"db.adminCommand({ ping: 1 }).ok\""
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -28,8 +30,13 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Initiate MongoDB replica set
+        run: >
+          docker exec ${{ job.services.mongodb.id }} mongosh --quiet --eval
+          'rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]})'
+
       - run: npm ci
       - run: npm run lint
       - run: npm test
         env:
-          MONGODB_URI_TEST: mongodb://127.0.0.1:27017/notes_api_test
+          MONGODB_URI_TEST: mongodb://127.0.0.1:27017/notes_api_test?replicaSet=rs0

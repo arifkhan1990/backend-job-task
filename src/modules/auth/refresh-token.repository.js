@@ -10,11 +10,13 @@ export const refreshTokenRepository = {
     return RefreshToken.create(data);
   },
 
-  findByHash(tokenHash) {
-    return RefreshToken.findOne({ tokenHash }).populate(
+  findByHash(tokenHash, { session } = {}) {
+    const query = RefreshToken.findOne({ tokenHash }).populate(
       'user',
       'name email role interests',
     );
+
+    return session ? query.session(session) : query;
   },
 
   revokeByHash(tokenHash, { session, replacedByHash } = {}) {

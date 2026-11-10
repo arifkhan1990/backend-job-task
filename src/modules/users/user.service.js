@@ -2,7 +2,9 @@ import { noteRepository } from '../notes/note.repository.js';
 import { postRepository } from '../posts/post.repository.js';
 import { refreshTokenRepository } from '../auth/refresh-token.repository.js';
 import { ApiError } from '../../utils/ApiError.js';
+import { audit } from '../../utils/audit.js';
 import { getPagination, paginationMeta } from '../../utils/pagination.js';
+import { withTransaction } from '../../utils/transaction.js';
 import { userRepository } from './user.repository.js';
 
 export async function listUsers({ page, limit }) {
@@ -16,8 +18,17 @@ export async function listUsers({ page, limit }) {
   return { users, meta: paginationMeta({ page, limit, total }) };
 }
 
-export async function createUser(data) {
-  return userRepository.create(data);
+export async function createUser(data, actorId) {
+  const user = await userRepository.create(data);
+
+  audit({
+    action: 'user.create',
+    actorId,
+    targetId: user.id,
+    role: user.role,
+  });
+
+  return user;
 }
 
 export async function getUserById(id) {
@@ -31,34 +42,45 @@ export async function getUserById(id) {
 }
 
 export async function updateUser(id, updates, actorId) {
-  const user = await userRepository.findById(id);
+  const user = await withTransaction(async (session) => {
+    const existing = await userRepository.findById(id, { session });
 
-  if (!user) {
-    throw new ApiError(404, 'User not found');
-  }
-
-  if (updates.role && updates.role !== user.role) {
-    if (user.id === actorId) {
-      throw new ApiError(400, 'You cannot change your own role', undefined, 'SELF_ROLE_CHANGE');
+    if (!existing) {
+      throw new ApiError(404, 'User not found');
     }
 
-    if (user.role === 'admin') {
-      const adminCount = await userRepository.countAdmins();
+    const roleChanged = Boolean(updates.role && updates.role !== existing.role);
 
-      if (adminCount <= 1) {
-        throw new ApiError(400, 'Cannot demote the last admin', undefined, 'LAST_ADMIN');
+    if (roleChanged) {
+      if (existing.id === actorId) {
+        throw new ApiError(400, 'You cannot change your own role', undefined, 'SELF_ROLE_CHANGE');
+      }
+
+      if (existing.role === 'admin') {
+        const adminCount = await userRepository.countAdmins({ session });
+
+        if (adminCount <= 1) {
+          throw new ApiError(400, 'Cannot demote the last admin', undefined, 'LAST_ADMIN');
+        }
       }
     }
-  }
 
-  const roleChanged = Boolean(updates.role && updates.role !== user.role);
+    Object.assign(existing, updates);
+    await userRepository.save(existing, { session });
 
-  Object.assign(user, updates);
-  await userRepository.save(user);
+    if (updates.password || roleChanged) {
+      await refreshTokenRepository.revokeAllForUser(existing._id, { session });
+    }
 
-  if (updates.password || roleChanged) {
-    await refreshTokenRepository.revokeAllForUser(user._id);
-  }
+    return existing;
+  });
+
+  audit({
+    action: 'user.update',
+    actorId,
+    targetId: user.id,
+    changedFields: Object.keys(updates),
+  });
 
   return user;
 }
@@ -68,26 +90,35 @@ export async function deleteUser(id, actorId) {
     throw new ApiError(400, 'You cannot delete your own account', undefined, 'SELF_DELETE');
   }
 
-  const user = await userRepository.findById(id);
+  const user = await withTransaction(async (session) => {
+    const existing = await userRepository.findById(id, { session });
 
-  if (!user) {
-    throw new ApiError(404, 'User not found');
-  }
-
-  if (user.role === 'admin') {
-    const adminCount = await userRepository.countAdmins();
-
-    if (adminCount <= 1) {
-      throw new ApiError(400, 'Cannot delete the last admin', undefined, 'LAST_ADMIN');
+    if (!existing) {
+      throw new ApiError(404, 'User not found');
     }
-  }
 
-  await userRepository.deleteById(id);
-  await Promise.all([
-    noteRepository.deleteByOwner(user._id),
-    postRepository.deleteByAuthor(user._id),
-    refreshTokenRepository.deleteByUser(user._id),
-  ]);
+    if (existing.role === 'admin') {
+      const adminCount = await userRepository.countAdmins({ session });
+
+      if (adminCount <= 1) {
+        throw new ApiError(400, 'Cannot delete the last admin', undefined, 'LAST_ADMIN');
+      }
+    }
+
+    await userRepository.deleteById(id, { session });
+    await noteRepository.deleteByOwner(existing._id, { session });
+    await postRepository.deleteByAuthor(existing._id, { session });
+    await refreshTokenRepository.deleteByUser(existing._id, { session });
+
+    return existing;
+  });
+
+  audit({
+    action: 'user.delete',
+    actorId,
+    targetId: user.id,
+    role: user.role,
+  });
 
   return user;
 }
