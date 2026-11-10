@@ -21,7 +21,9 @@ The companion frontend is in [`frontend-job-task`](https://github.com/arifkhan19
 - Public per-user posts view built with a single `$lookup` pipeline.
 - Admin interests view built with a single `$group`/`$unwind` pipeline.
 - Request validation, rate limiting, Helmet, CORS allowlist and centralised error handling.
-- Integration tests against a real MongoDB instance.
+- OpenAPI 3 specification served with Swagger UI.
+- Structured logs, audit events, optional Sentry and health/readiness checks.
+- Integration tests against a real MongoDB replica set.
 - Dockerfile and Docker Compose setup for a local production-like run.
 
 ---
@@ -62,7 +64,8 @@ src/
   utils/                 JWT, cookies, tokens, pagination, API errors, transactions, audit
 migrations/              migrate-mongo index synchronization
 scripts/seedAdmin.js     Creates or promotes an admin from environment variables
-docs/                    Backup/restore and observability runbooks
+docs/                    Backup/restore, observability and query-plan evidence
+src/docs/                OpenAPI 3 spec and Swagger UI mount
 tests/                   Integration tests (Vitest + Supertest)
 ```
 
@@ -115,10 +118,13 @@ npm run migrate:up    # apply index migrations
 npm run migrate:status
 npm run migrate:down  # revert model-defined indexes (destructive)
 npm run seed:admin    # create/promote admin
+npm run explain       # seed a scratch DB and print EXPLAIN plans
 npm run lint          # ESLint
 npm test              # integration tests
 npm run check         # lint + tests
 ```
+
+API documentation is available at `http://localhost:5000/api/docs` (Swagger UI) and the raw spec at `http://localhost:5000/api/openapi.yaml`.
 
 In development and tests, Mongoose auto-builds indexes. In production, `AUTO_INDEX=false` and the deployment runs `npm run migrate:up` before the API starts; the migration uses the model definitions as the source of truth.
 
@@ -435,6 +441,10 @@ See [`docs/observability.md`](docs/observability.md).
 ### Backups
 
 See [`docs/backup-restore.md`](docs/backup-restore.md) for encrypted `mongodump`/`mongorestore` commands, retention and restore drills.
+
+### Query plans
+
+See [`docs/performance.md`](docs/performance.md) for the reproducible `EXPLAIN` results and index interpretation.
 
 ---
 

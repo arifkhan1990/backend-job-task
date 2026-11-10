@@ -1,5 +1,5 @@
-import mongoose from 'mongoose';
 import { User } from '../../models/User.js';
+import { groupByInterestsPipeline, postsByUserPipeline } from './user.pipelines.js';
 
 export const userRepository = {
   async create(data, { session } = {}) {
@@ -64,76 +64,10 @@ export const userRepository = {
   },
 
   async groupByInterests({ skip, limit, interest }) {
-    const pipeline = [];
-
-    if (interest) {
-      pipeline.push({ $match: { interests: interest } });
-    }
-
-    pipeline.push(
-      { $unwind: '$interests' },
-      {
-        $group: {
-          _id: '$interests',
-          userCount: { $sum: 1 },
-          users: { $push: { _id: '$_id', name: '$name' } },
-        },
-      },
-      { $sort: { _id: 1 } },
-      {
-        $project: {
-          _id: 0,
-          interest: '$_id',
-          userCount: 1,
-          users: 1,
-        },
-      },
-      {
-        $facet: {
-          data: [{ $skip: skip }, { $limit: limit }],
-          meta: [{ $count: 'total' }],
-        },
-      },
-    );
-
-    return User.aggregate(pipeline);
+    return User.aggregate(groupByInterestsPipeline({ skip, limit, interest }));
   },
 
   async findPostsByUser(userId, { skip, limit }) {
-    return User.aggregate([
-      { $match: { _id: new mongoose.Types.ObjectId(userId) } },
-      {
-        $lookup: {
-          from: 'posts',
-          localField: '_id',
-          foreignField: 'author',
-          pipeline: [
-            { $sort: { createdAt: -1, _id: -1 } },
-            {
-              $facet: {
-                data: [{ $skip: skip }, { $limit: limit }],
-                meta: [{ $count: 'total' }],
-              },
-            },
-          ],
-          as: 'postPage',
-        },
-      },
-      {
-        $project: {
-          _id: 1,
-          name: 1,
-          page: { $arrayElemAt: ['$postPage', 0] },
-        },
-      },
-      {
-        $project: {
-          _id: 1,
-          name: 1,
-          posts: { $ifNull: ['$page.data', []] },
-          totalPosts: { $ifNull: [{ $arrayElemAt: ['$page.meta.total', 0] }, 0] },
-        },
-      },
-    ]);
+    return User.aggregate(postsByUserPipeline({ userId, skip, limit }));
   },
 };
