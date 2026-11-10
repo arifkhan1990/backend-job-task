@@ -50,17 +50,19 @@ An admin inherits the normal user capabilities. Admins can **read** other users'
 src/
   app.js                 Express app (no listening side effects)
   server.js              HTTP server, database connection and graceful shutdown
-  config/                Environment validation and Mongoose connection
-  models/                User, Note, Post schemas and indexes
-  middleware/            Auth, RBAC, validation, rate limits, error handling
+  config/                Environment, database, logger and Sentry setup
+  models/                User, Note, Post, RefreshToken schemas and indexes
+  middleware/            Auth, RBAC, CSRF, validation, rate limits, errors
   modules/
-    auth/                Register, login, profile
-    users/               Admin user management, interests aggregation, user posts
-    notes/               Note CRUD and ownership rules
-    posts/               Post creation
+    auth/                Register, login, refresh, logout, profile, token repository
+    users/               Admin user management, repository, interests and posts views
+    notes/               Note CRUD, ownership rules and repository
+    posts/               Post creation and repository
   routes/                API router
-  utils/                 JWT, pagination, ApiError, async wrapper
+  utils/                 JWT, cookies, tokens, pagination, API errors, transactions, audit
+migrations/              migrate-mongo index synchronization
 scripts/seedAdmin.js     Creates or promotes an admin from environment variables
+docs/                    Backup/restore and observability runbooks
 tests/                   Integration tests (Vitest + Supertest)
 ```
 
@@ -71,8 +73,16 @@ tests/                   Integration tests (Vitest + Supertest)
 ### Prerequisites
 
 - Node.js 20 or newer
-- MongoDB 6 or newer (local service or Docker)
+- MongoDB 6 or newer configured as a **single-node replica set** (required for transactions)
 - npm
+
+The simplest local MongoDB is the Compose service:
+
+```bash
+docker compose up -d mongo
+```
+
+If you run `mongod` directly, start it with `--replSet rs0` and run `rs.initiate()` once.
 
 ### Local setup
 
@@ -94,18 +104,23 @@ npm run seed:admin
 npm run dev
 ```
 
-The API listens on `http://localhost:5000` by default.
+The API listens on `http://localhost:5000` by default. Liveness is `GET /health`; readiness is `GET /ready`.
 
 Useful commands:
 
 ```bash
-npm run dev          # watch mode
-npm start            # production start
-npm run seed:admin   # create/promote admin
-npm run lint         # ESLint
-npm test             # integration tests
-npm run check        # lint + tests
+npm run dev           # watch mode
+npm start             # production start
+npm run migrate:up    # apply index migrations
+npm run migrate:status
+npm run migrate:down  # revert model-defined indexes (destructive)
+npm run seed:admin    # create/promote admin
+npm run lint          # ESLint
+npm test              # integration tests
+npm run check         # lint + tests
 ```
+
+In development and tests, Mongoose auto-builds indexes. In production, `AUTO_INDEX=false` and the deployment runs `npm run migrate:up` before the API starts; the migration uses the model definitions as the source of truth.
 
 ### Environment variables
 
@@ -123,6 +138,9 @@ npm run check        # lint + tests
 | `COOKIE_SAME_SITE` |  | `none` in production, `lax` otherwise | Cookie `SameSite` policy |
 | `CORS_ORIGIN` |  | `http://localhost:5173` | Comma-separated allowed origins |
 | `BCRYPT_ROUNDS` |  | `12` | bcrypt cost factor |
+| `LOG_LEVEL` |  | `info` | Pino log level (`silent` in tests) |
+| `AUTO_INDEX` |  | `true` in dev/test, `false` in production | Mongoose index auto-build |
+| `SENTRY_DSN` |  | empty | Optional error tracking |
 | `ADMIN_NAME` |  | `Administrator` | Seed script only |
 | `ADMIN_EMAIL` |  | — | Seed script only |
 | `ADMIN_PASSWORD` |  | — | Seed script only |
@@ -391,6 +409,35 @@ The lookup uses the `posts.author` portion of the compound index. The inner `$so
 
 ---
 
+## Operations
+
+### Migrations
+
+Models are the single source of truth for index definitions. `migrations/20260101000000-sync-indexes.js` calls `syncIndexes()` for every model, so production can disable `autoIndex` and apply indexes deliberately:
+
+```bash
+npm run migrate:up
+npm run migrate:status
+```
+
+`migrate:down` drops the model-defined indexes; it is destructive and should only be used in a controlled rollback.
+
+### Health and logs
+
+- `GET /health` — liveness, version and uptime.
+- `GET /ready` — MongoDB ping; `503` when the database is unavailable.
+- Every request gets an `x-request-id`; logs are JSON and redact cookies, authorization headers and token fields.
+- Audit events (`audit: true`) record register/login/refresh/reuse/logout and admin user create/update/delete without secrets.
+- Set `SENTRY_DSN` to enable optional Sentry error tracking.
+
+See [`docs/observability.md`](docs/observability.md).
+
+### Backups
+
+See [`docs/backup-restore.md`](docs/backup-restore.md) for encrypted `mongodump`/`mongorestore` commands, retention and restore drills.
+
+---
+
 ## Security notes
 
 - Passwords are hashed with bcrypt at cost 12 by default. The hash is `select: false` and is removed by the JSON transform, so it never appears in a response.
@@ -421,6 +468,7 @@ The suite uses Vitest, Supertest and a real MongoDB database. It covers:
 - Access-token expiry handling and hash non-disclosure.
 - Refresh-token rotation, reuse detection, logout revocation and password-change revocation.
 - CSRF enforcement on refresh/logout and cookie flags.
+- Health and readiness endpoints.
 - Admin-only route protection.
 - User CRUD and cascade deletion of notes/posts/refresh tokens.
 - Note ownership isolation and admin read access.
@@ -429,7 +477,7 @@ The suite uses Vitest, Supertest and a real MongoDB database. It covers:
 - The interests aggregation (including a spy that asserts a single `aggregate()` call).
 - The posts `$lookup` aggregation (single `$lookup`, sorted and paginated).
 
-Tests use `MONGODB_URI_TEST` when set, otherwise `mongodb://127.0.0.1:27017/notes_api_test`. The GitHub Actions workflow starts a MongoDB 7 service and runs `npm run lint` plus `npm test`.
+Tests use `MONGODB_URI_TEST` when set, otherwise `mongodb://127.0.0.1:27017/notes_api_test?replicaSet=rs0`. The GitHub Actions workflow starts a MongoDB 7 single-node replica set and runs `npm run lint` plus `npm test`.
 
 ---
 
@@ -444,9 +492,9 @@ docker compose up -d --build
 docker compose exec api node scripts/seedAdmin.js
 ```
 
-The API is available at `http://localhost:5000`. The health endpoint is `GET /health`.
+The Compose stack starts MongoDB as a single-node replica set, waits for it to become healthy, then runs `npm run migrate:up` before starting the API. The API is available at `http://localhost:5000`; liveness is `GET /health` and readiness is `GET /ready`.
 
-Set `CORS_ORIGIN` to the frontend origin when running the two containers together.
+Set `CORS_ORIGIN` to the frontend origin when running the two containers together. In production behind HTTPS, set `COOKIE_SECURE=true` and use the appropriate `COOKIE_SAME_SITE` value (`none` for a cross-site frontend, `lax` for same-site).
 
 ---
 
@@ -454,6 +502,6 @@ Set `CORS_ORIGIN` to the frontend origin when running the two containers togethe
 
 - **Short access token + rotating refresh token.** Access tokens live for 15 minutes; refresh tokens are hashed, rotated and revocable. The frontend refreshes silently and logs out when refresh fails.
 - **Offset pagination.** It is simple and gives page numbers. Very deep pages still pay a `skip` cost; cursor pagination on `_id` would be the next step for large datasets.
-- **Cascade deletes are not transactional yet.** Transactions require a replica set; the repo uses one in Docker/CI, and the cascade will be wrapped in a transaction in the hardening task.
+- **Transactions require a replica set.** User deletion, registration and refresh-token rotation are transactional. The Compose and CI environments use a single-node replica set; a standalone local `mongod` will reject transactions.
 - **Admin can read but not mutate other users' notes.** This matches the permission table: admins manage users and view everyone's notes, while note mutation stays with the owner.
 - **Grouped interests returns the full member list per group.** Pagination is at the group level. At large scale, member lists would be capped or paginated separately.

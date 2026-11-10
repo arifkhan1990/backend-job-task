@@ -45,4 +45,10 @@ export const env = {
   refreshTokenTtlDays: Number(process.env.REFRESH_TOKEN_TTL_DAYS || 7),
   cookieSecure,
   cookieSameSite,
+  logLevel: process.env.LOG_LEVEL || 'info',
+  sentryDsn: process.env.SENTRY_DSN || '',
+  autoIndex:
+    process.env.AUTO_INDEX === undefined
+      ? process.env.NODE_ENV !== 'production'
+      : process.env.AUTO_INDEX === 'true',
 };

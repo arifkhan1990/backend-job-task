@@ -1,3 +1,5 @@
+import { logger } from '../config/logger.js';
+
 export function errorHandler(error, _req, res, next) {
   if (res.headersSent) {
     return next(error);
@@ -32,7 +34,7 @@ export function errorHandler(error, _req, res, next) {
   }
 
   if (statusCode >= 500) {
-    console.error(error);
+    logger.error({ err: error }, 'Unhandled request error');
     code = 'INTERNAL_ERROR';
     message = 'Internal server error';
     details = undefined;

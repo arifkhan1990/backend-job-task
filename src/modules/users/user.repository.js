@@ -16,8 +16,8 @@ export const userRepository = {
     return withPassword ? query.select('+password') : query;
   },
 
-  findById(id) {
-    return User.findById(id);
+  findById(id, { session } = {}) {
+    return session ? User.findById(id).session(session) : User.findById(id);
   },
 
   findByIdLean(id) {
@@ -40,12 +40,14 @@ export const userRepository = {
     return User.countDocuments();
   },
 
-  countAdmins() {
-    return User.countDocuments({ role: 'admin' });
+  countAdmins({ session } = {}) {
+    const query = User.countDocuments({ role: 'admin' });
+    return session ? query.session(session) : query;
   },
 
-  countAdminsExcluding(ids) {
-    return User.countDocuments({ role: 'admin', _id: { $nin: ids } });
+  countAdminsExcluding(ids, { session } = {}) {
+    const query = User.countDocuments({ role: 'admin', _id: { $nin: ids } });
+    return session ? query.session(session) : query;
   },
 
   save(user, { session } = {}) {

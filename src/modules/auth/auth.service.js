@@ -1,36 +1,47 @@
 import { env } from '../../config/env.js';
 import { ApiError } from '../../utils/ApiError.js';
+import { audit } from '../../utils/audit.js';
 import { signToken } from '../../utils/jwt.js';
 import { generateRefreshToken, hashToken } from '../../utils/tokens.js';
+import { withTransaction } from '../../utils/transaction.js';
 import { userRepository } from '../users/user.repository.js';
 import { refreshTokenRepository } from './refresh-token.repository.js';
+
+const CONCURRENT_REFRESH = Symbol('CONCURRENT_REFRESH');
 
 function refreshExpiry() {
   return new Date(Date.now() + env.refreshTokenTtlDays * 24 * 60 * 60 * 1000);
 }
 
-async function createSession(user) {
+async function createSession(user, { session } = {}) {
   const refreshToken = generateRefreshToken();
 
-  await refreshTokenRepository.create({
-    user: user._id,
-    tokenHash: hashToken(refreshToken),
-    expiresAt: refreshExpiry(),
-  });
+  await refreshTokenRepository.create(
+    {
+      user: user._id,
+      tokenHash: hashToken(refreshToken),
+      expiresAt: refreshExpiry(),
+    },
+    { session },
+  );
 
   return { accessToken: signToken(user), refreshToken };
 }
 
 export async function registerUser({ name, email, password, interests }) {
-  const user = await userRepository.create({
-    name,
-    email,
-    password,
-    interests,
-    role: 'user',
+  const result = await withTransaction(async (session) => {
+    const user = await userRepository.create(
+      { name, email, password, interests, role: 'user' },
+      { session },
+    );
+    const tokens = await createSession(user, { session });
+
+    return { user, ...tokens };
   });
 
-  return { user, ...(await createSession(user)) };
+  audit({ action: 'auth.register', actorId: result.user.id });
+
+  return result;
 }
 
 export async function loginUser({ email, password }) {
@@ -40,7 +51,11 @@ export async function loginUser({ email, password }) {
     throw new ApiError(401, 'Invalid email or password', undefined, 'INVALID_CREDENTIALS');
   }
 
-  return { user, ...(await createSession(user)) };
+  const result = { user, ...(await createSession(user)) };
+
+  audit({ action: 'auth.login', actorId: user.id });
+
+  return result;
 }
 
 export async function rotateRefreshToken(rawToken) {
@@ -54,6 +69,7 @@ export async function rotateRefreshToken(rawToken) {
   if (stored.revokedAt) {
     if (stored.user) {
       await refreshTokenRepository.revokeAllForUser(stored.user._id);
+      audit({ action: 'auth.refresh.reuse', actorId: stored.user.id });
     }
 
     throw new ApiError(401, 'Refresh token reuse detected', undefined, 'REFRESH_TOKEN_REUSED');
@@ -71,26 +87,48 @@ export async function rotateRefreshToken(rawToken) {
 
   const refreshToken = generateRefreshToken();
   const nextHash = hashToken(refreshToken);
-  const revoked = await refreshTokenRepository.revokeByHash(tokenHash, {
-    replacedByHash: nextHash,
-  });
 
-  if (!revoked) {
-    await refreshTokenRepository.revokeAllForUser(stored.user._id);
-    throw new ApiError(401, 'Refresh token reuse detected', undefined, 'REFRESH_TOKEN_REUSED');
+  let result;
+
+  try {
+    result = await withTransaction(async (session) => {
+      const revoked = await refreshTokenRepository.revokeByHash(tokenHash, {
+        session,
+        replacedByHash: nextHash,
+      });
+
+      if (!revoked) {
+        throw CONCURRENT_REFRESH;
+      }
+
+      await refreshTokenRepository.create(
+        {
+          user: stored.user._id,
+          tokenHash: nextHash,
+          expiresAt: refreshExpiry(),
+        },
+        { session },
+      );
+
+      return {
+        user: stored.user,
+        accessToken: signToken(stored.user),
+        refreshToken,
+      };
+    });
+  } catch (error) {
+    if (error === CONCURRENT_REFRESH) {
+      await refreshTokenRepository.revokeAllForUser(stored.user._id);
+      audit({ action: 'auth.refresh.reuse', actorId: stored.user.id });
+      throw new ApiError(401, 'Refresh token reuse detected', undefined, 'REFRESH_TOKEN_REUSED');
+    }
+
+    throw error;
   }
 
-  await refreshTokenRepository.create({
-    user: stored.user._id,
-    tokenHash: nextHash,
-    expiresAt: refreshExpiry(),
-  });
+  audit({ action: 'auth.refresh', actorId: stored.user.id });
 
-  return {
-    user: stored.user,
-    accessToken: signToken(stored.user),
-    refreshToken,
-  };
+  return result;
 }
 
 export async function logout(rawToken) {
@@ -98,7 +136,11 @@ export async function logout(rawToken) {
     return;
   }
 
-  await refreshTokenRepository.revokeByHash(hashToken(rawToken));
+  const revoked = await refreshTokenRepository.revokeByHash(hashToken(rawToken));
+
+  if (revoked) {
+    audit({ action: 'auth.logout', actorId: revoked.user.toString() });
+  }
 }
 
 export async function revokeAllForUser(userId) {
@@ -106,18 +148,30 @@ export async function revokeAllForUser(userId) {
 }
 
 export async function updateProfile(userId, updates) {
-  const user = await userRepository.findById(userId);
+  const passwordChanged = Boolean(updates.password);
 
-  if (!user) {
-    throw new ApiError(404, 'User not found');
-  }
+  const user = await withTransaction(async (session) => {
+    const existing = await userRepository.findById(userId, { session });
 
-  Object.assign(user, updates);
-  await userRepository.save(user);
+    if (!existing) {
+      throw new ApiError(404, 'User not found');
+    }
 
-  if (updates.password) {
-    await revokeAllForUser(user._id);
-  }
+    Object.assign(existing, updates);
+    await userRepository.save(existing, { session });
+
+    if (passwordChanged) {
+      await refreshTokenRepository.revokeAllForUser(existing._id, { session });
+    }
+
+    return existing;
+  });
+
+  audit({
+    action: 'auth.profile.update',
+    actorId: userId,
+    changedFields: Object.keys(updates),
+  });
 
   return user;
 }
