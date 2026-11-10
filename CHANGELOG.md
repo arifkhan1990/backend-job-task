@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- Production image now ships `migrations/` and `migrate-mongo-config.js` and runs pending migrations before the API starts.
+
 ## [1.1.0] - 2026-11-10
 
 ### Added
