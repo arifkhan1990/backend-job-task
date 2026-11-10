@@ -14,8 +14,9 @@ export const authenticate = asyncHandler(async (req, _res, next) => {
   let payload;
   try {
     payload = verifyToken(token);
-  } catch {
-    throw new ApiError(401, 'Invalid or expired token');
+  } catch (error) {
+    const code = error.name === 'TokenExpiredError' ? 'TOKEN_EXPIRED' : 'INVALID_TOKEN';
+    throw new ApiError(401, 'Invalid or expired token', undefined, code);
   }
 
   // Look the account up on every request so deleted users and role changes

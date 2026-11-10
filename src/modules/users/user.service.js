@@ -1,5 +1,6 @@
 import { noteRepository } from '../notes/note.repository.js';
 import { postRepository } from '../posts/post.repository.js';
+import { refreshTokenRepository } from '../auth/refresh-token.repository.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { getPagination, paginationMeta } from '../../utils/pagination.js';
 import { userRepository } from './user.repository.js';
@@ -50,8 +51,14 @@ export async function updateUser(id, updates, actorId) {
     }
   }
 
+  const roleChanged = Boolean(updates.role && updates.role !== user.role);
+
   Object.assign(user, updates);
   await userRepository.save(user);
+
+  if (updates.password || roleChanged) {
+    await refreshTokenRepository.revokeAllForUser(user._id);
+  }
 
   return user;
 }
@@ -79,6 +86,7 @@ export async function deleteUser(id, actorId) {
   await Promise.all([
     noteRepository.deleteByOwner(user._id),
     postRepository.deleteByAuthor(user._id),
+    refreshTokenRepository.deleteByUser(user._id),
   ]);
 
   return user;
