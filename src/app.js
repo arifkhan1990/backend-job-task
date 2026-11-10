@@ -33,6 +33,6 @@ app.get('/health', (_req, res) => {
   });
 });
 
-app.use('/api', apiLimiter, apiRoutes);
+app.use('/api/v1', apiLimiter, apiRoutes);
 app.use(notFound);
 app.use(errorHandler);

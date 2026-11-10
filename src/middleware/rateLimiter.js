@@ -9,7 +9,7 @@ export const apiLimiter = rateLimit({
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   skip: skipInTests,
-  message: { error: { message: 'Too many requests. Try again shortly.' } },
+  message: { error: { code: 'RATE_LIMITED', message: 'Too many requests. Try again shortly.' } },
 });
 
 export const authLimiter = rateLimit({
@@ -18,5 +18,10 @@ export const authLimiter = rateLimit({
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   skip: skipInTests,
-  message: { error: { message: 'Too many authentication attempts. Try again later.' } },
+  message: {
+    error: {
+      code: 'RATE_LIMITED',
+      message: 'Too many authentication attempts. Try again later.',
+    },
+  },
 });

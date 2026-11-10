@@ -5,7 +5,7 @@ import { authHeader, createAdmin, createUser } from './helpers.js';
 
 const createNote = (token, overrides = {}) =>
   request(app)
-    .post('/api/notes')
+    .post('/api/v1/notes')
     .set('Authorization', token)
     .send({ title: 'Note', content: 'Body', ...overrides });
 
@@ -32,7 +32,7 @@ describe('notes', () => {
     await createNote(authHeader(bob), { title: 'B1' });
 
     const res = await request(app)
-      .get('/api/notes?page=1&limit=1')
+      .get('/api/v1/notes?page=1&limit=1')
       .set('Authorization', authHeader(alice));
 
     expect(res.status).toBe(200);
@@ -51,14 +51,14 @@ describe('notes', () => {
     await createNote(authHeader(bob), { title: 'Bob note' });
 
     const all = await request(app)
-      .get('/api/notes')
+      .get('/api/v1/notes')
       .set('Authorization', authHeader(admin));
 
     expect(all.status).toBe(200);
     expect(all.body.meta.total).toBe(2);
 
     const filtered = await request(app)
-      .get(`/api/notes?ownerId=${bob.id}`)
+      .get(`/api/v1/notes?ownerId=${bob.id}`)
       .set('Authorization', authHeader(admin));
 
     expect(filtered.body.data).toHaveLength(1);
@@ -72,18 +72,18 @@ describe('notes', () => {
     const noteId = note.body.data._id;
 
     const get = await request(app)
-      .get(`/api/notes/${noteId}`)
+      .get(`/api/v1/notes/${noteId}`)
       .set('Authorization', authHeader(alice));
     expect(get.status).toBe(404);
 
     const update = await request(app)
-      .patch(`/api/notes/${noteId}`)
+      .patch(`/api/v1/notes/${noteId}`)
       .set('Authorization', authHeader(alice))
       .send({ title: 'Hacked' });
     expect(update.status).toBe(404);
 
     const remove = await request(app)
-      .delete(`/api/notes/${noteId}`)
+      .delete(`/api/v1/notes/${noteId}`)
       .set('Authorization', authHeader(alice));
     expect(remove.status).toBe(404);
   });
@@ -95,12 +95,12 @@ describe('notes', () => {
     const noteId = note.body.data._id;
 
     const get = await request(app)
-      .get(`/api/notes/${noteId}`)
+      .get(`/api/v1/notes/${noteId}`)
       .set('Authorization', authHeader(admin));
     expect(get.status).toBe(200);
 
     const update = await request(app)
-      .patch(`/api/notes/${noteId}`)
+      .patch(`/api/v1/notes/${noteId}`)
       .set('Authorization', authHeader(admin))
       .send({ title: 'Changed' });
     expect(update.status).toBe(404);
@@ -112,7 +112,7 @@ describe('notes', () => {
     const noteId = created.body.data._id;
 
     const updated = await request(app)
-      .patch(`/api/notes/${noteId}`)
+      .patch(`/api/v1/notes/${noteId}`)
       .set('Authorization', authHeader(user))
       .send({ title: 'Updated', content: 'New body' });
 
@@ -123,12 +123,12 @@ describe('notes', () => {
     });
 
     const removed = await request(app)
-      .delete(`/api/notes/${noteId}`)
+      .delete(`/api/v1/notes/${noteId}`)
       .set('Authorization', authHeader(user));
     expect(removed.status).toBe(204);
 
     const missing = await request(app)
-      .get(`/api/notes/${noteId}`)
+      .get(`/api/v1/notes/${noteId}`)
       .set('Authorization', authHeader(user));
     expect(missing.status).toBe(404);
   });
@@ -140,7 +140,7 @@ describe('notes', () => {
     expect(empty.status).toBe(400);
 
     const badId = await request(app)
-      .get('/api/notes/nope')
+      .get('/api/v1/notes/nope')
       .set('Authorization', authHeader(user));
     expect(badId.status).toBe(400);
   });

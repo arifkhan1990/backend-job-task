@@ -1,31 +1,26 @@
-import mongoose from 'mongoose';
-import { Note } from '../../models/Note.js';
-import { Post } from '../../models/Post.js';
-import { User } from '../../models/User.js';
+import { noteRepository } from '../notes/note.repository.js';
+import { postRepository } from '../posts/post.repository.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { getPagination, paginationMeta } from '../../utils/pagination.js';
+import { userRepository } from './user.repository.js';
 
 export async function listUsers({ page, limit }) {
   const { skip } = getPagination({ page, limit });
 
   const [users, total] = await Promise.all([
-    User.find()
-      .sort({ createdAt: -1, _id: -1 })
-      .skip(skip)
-      .limit(limit)
-      .lean(),
-    User.countDocuments(),
+    userRepository.list({ skip, limit }),
+    userRepository.count(),
   ]);
 
   return { users, meta: paginationMeta({ page, limit, total }) };
 }
 
 export async function createUser(data) {
-  return User.create(data);
+  return userRepository.create(data);
 }
 
 export async function getUserById(id) {
-  const user = await User.findById(id);
+  const user = await userRepository.findById(id);
 
   if (!user) {
     throw new ApiError(404, 'User not found');
@@ -35,7 +30,7 @@ export async function getUserById(id) {
 }
 
 export async function updateUser(id, updates, actorId) {
-  const user = await User.findById(id);
+  const user = await userRepository.findById(id);
 
   if (!user) {
     throw new ApiError(404, 'User not found');
@@ -43,50 +38,47 @@ export async function updateUser(id, updates, actorId) {
 
   if (updates.role && updates.role !== user.role) {
     if (user.id === actorId) {
-      throw new ApiError(400, 'You cannot change your own role');
+      throw new ApiError(400, 'You cannot change your own role', undefined, 'SELF_ROLE_CHANGE');
     }
 
     if (user.role === 'admin') {
-      const adminCount = await User.countDocuments({ role: 'admin' });
+      const adminCount = await userRepository.countAdmins();
 
       if (adminCount <= 1) {
-        throw new ApiError(400, 'Cannot demote the last admin');
+        throw new ApiError(400, 'Cannot demote the last admin', undefined, 'LAST_ADMIN');
       }
     }
   }
 
   Object.assign(user, updates);
-  await user.save();
+  await userRepository.save(user);
 
   return user;
 }
 
 export async function deleteUser(id, actorId) {
   if (id === actorId) {
-    throw new ApiError(400, 'You cannot delete your own account');
+    throw new ApiError(400, 'You cannot delete your own account', undefined, 'SELF_DELETE');
   }
 
-  const user = await User.findById(id);
+  const user = await userRepository.findById(id);
 
   if (!user) {
     throw new ApiError(404, 'User not found');
   }
 
   if (user.role === 'admin') {
-    const adminCount = await User.countDocuments({ role: 'admin' });
+    const adminCount = await userRepository.countAdmins();
 
     if (adminCount <= 1) {
-      throw new ApiError(400, 'Cannot delete the last admin');
+      throw new ApiError(400, 'Cannot delete the last admin', undefined, 'LAST_ADMIN');
     }
   }
 
-  await user.deleteOne();
-
-  // Keep the database consistent after removing an account. MongoDB transactions
-  // require a replica set, so these deletes are intentionally sequential and simple.
+  await userRepository.deleteById(id);
   await Promise.all([
-    Note.deleteMany({ owner: user._id }),
-    Post.deleteMany({ author: user._id }),
+    noteRepository.deleteByOwner(user._id),
+    postRepository.deleteByAuthor(user._id),
   ]);
 
   return user;
@@ -94,41 +86,10 @@ export async function deleteUser(id, actorId) {
 
 export async function groupUsersByInterests({ page, limit, interest }) {
   const { skip } = getPagination({ page, limit });
-  const pipeline = [];
-
-  if (interest) {
-    pipeline.push({ $match: { interests: interest } });
-  }
-
-  pipeline.push(
-    { $unwind: '$interests' },
-    {
-      $group: {
-        _id: '$interests',
-        userCount: { $sum: 1 },
-        users: { $push: { _id: '$_id', name: '$name' } },
-      },
-    },
-    { $sort: { _id: 1 } },
-    {
-      $project: {
-        _id: 0,
-        interest: '$_id',
-        userCount: 1,
-        users: 1,
-      },
-    },
-    {
-      $facet: {
-        data: [{ $skip: skip }, { $limit: limit }],
-        meta: [{ $count: 'total' }],
-      },
-    },
-  );
 
   // This is the single aggregate() call for the interests view. Pagination and
   // the total count are produced inside the same pipeline with $facet.
-  const [result] = await User.aggregate(pipeline);
+  const [result] = await userRepository.groupByInterests({ skip, limit, interest });
 
   return {
     groups: result?.data ?? [],
@@ -144,43 +105,8 @@ export async function getUserPosts(userId, { page, limit }) {
   const { skip } = getPagination({ page, limit });
 
   // One aggregate() with one $lookup. The lookup uses posts.author and the
-  // compound index supports the inner sort. $facet keeps the lookup output
-  // limited to the requested page plus the total count.
-  const [result] = await User.aggregate([
-    { $match: { _id: new mongoose.Types.ObjectId(userId) } },
-    {
-      $lookup: {
-        from: 'posts',
-        localField: '_id',
-        foreignField: 'author',
-        pipeline: [
-          { $sort: { createdAt: -1, _id: -1 } },
-          {
-            $facet: {
-              data: [{ $skip: skip }, { $limit: limit }],
-              meta: [{ $count: 'total' }],
-            },
-          },
-        ],
-        as: 'postPage',
-      },
-    },
-    {
-      $project: {
-        _id: 1,
-        name: 1,
-        page: { $arrayElemAt: ['$postPage', 0] },
-      },
-    },
-    {
-      $project: {
-        _id: 1,
-        name: 1,
-        posts: { $ifNull: ['$page.data', []] },
-        totalPosts: { $ifNull: [{ $arrayElemAt: ['$page.meta.total', 0] }, 0] },
-      },
-    },
-  ]);
+  // compound index supports the inner sort.
+  const [result] = await userRepository.findPostsByUser(userId, { skip, limit });
 
   if (!result) {
     throw new ApiError(404, 'User not found');
