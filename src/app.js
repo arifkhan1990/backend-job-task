@@ -12,6 +12,7 @@ import { initSentry } from './config/sentry.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { notFound } from './middleware/notFound.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
+import { mountApiDocs } from './docs/openapi.js';
 import apiRoutes from './routes/index.js';
 
 const require = createRequire(import.meta.url);
@@ -67,6 +68,8 @@ app.get('/ready', async (_req, res) => {
     res.status(503).json({ status: 'degraded', database: 'disconnected' });
   }
 });
+
+mountApiDocs(app);
 
 app.use('/api/v1', apiLimiter, apiRoutes);
 app.use(notFound);
