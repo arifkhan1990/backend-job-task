@@ -495,15 +495,15 @@ The production image/release flow is documented in [`deploy/README.md`](deploy/R
 
 ## Production
 
-The **`main`** branch (refresh-token variant) is deployed at **https://notes-api.nabasolution.tech**. Pushes to `main` auto-deploy through the self-hosted srv host; the container runs `npm run migrate:up` before starting.
+The **`main`** branch is deployed at **https://notes-api.nabasolution.tech**. It currently serves the single-JWT strict-PDF variant: PR #3 merged `strict-pdf` into `main`. Pushes to `main` auto-deploy through the self-hosted srv host; the container runs `npm run migrate:up` before starting.
 
-The **`strict-pdf`** branch is an alternative, single-JWT submission and is not deployed.
+The **`strict-pdf`** branch is the assessment snapshot of the same code and is not separately deployed. The earlier refresh-token/CSRF implementation is preserved in git history at `3946458` as the stronger security alternative.
 
 ---
 
 ## Design decisions and trade-offs
 
-- **Single JWT, no refresh token.** The token lives for 1 hour; the client logs in again after expiry. Password/role changes do not revoke an already-issued token before expiry. This is the strict-PDF variant; the `main` branch keeps rotating refresh tokens and CSRF for stronger revocation guarantees.
+- **Single JWT, no refresh token.** The token lives for 1 hour; the client logs in again after expiry. Password/role changes do not revoke an already-issued token before expiry. This is the current `main`/`strict-pdf` design. Before PR #3, `main` used rotating refresh tokens and CSRF; that variant is preserved in git history as the stronger revocation alternative.
 - **Offset pagination.** It is simple and gives page numbers. Very deep pages still pay a `skip` cost; cursor pagination on `_id` would be the next step for large datasets.
 - **Transactions require a replica set.** User update/delete and bulk delete are transactional. The Compose and CI environments use a single-node replica set; a standalone local `mongod` will reject transactions.
 - **Admin can read but not mutate other users' notes.** This matches the permission table: admins manage users and view everyone's notes, while note mutation stays with the owner.
