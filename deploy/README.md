@@ -10,10 +10,8 @@ Deployment uses the image published by `.github/workflows/release.yml` on a `v*`
 
 ```dotenv
 JWT_SECRET=<32+ random characters>
+JWT_EXPIRES_IN=1h
 CORS_ORIGIN=https://notes.example.com
-COOKIE_SECURE=true
-COOKIE_SAME_SITE=lax
-REFRESH_TOKEN_TTL_DAYS=7
 LOG_LEVEL=info
 # SENTRY_DSN=
 ```

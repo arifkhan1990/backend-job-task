@@ -10,8 +10,7 @@ The companion frontend is in [`frontend-job-task`](https://github.com/arifkhan19
 
 ## Features
 
-- Short-lived JWT access tokens with issuer/audience validation.
-- Rotating, hashed refresh tokens in an `HttpOnly` cookie, plus CSRF protection.
+- JWT authentication with issuer/audience validation and a 1-hour expiry.
 - Password hashing with bcrypt (configurable cost, default 12).
 - Two roles: `user` and `admin`, enforced at the route and query level.
 - Notes CRUD with strict ownership rules.
@@ -53,15 +52,15 @@ src/
   app.js                 Express app (no listening side effects)
   server.js              HTTP server, database connection and graceful shutdown
   config/                Environment, database, logger and Sentry setup
-  models/                User, Note, Post, RefreshToken schemas and indexes
-  middleware/            Auth, RBAC, CSRF, validation, rate limits, errors
+  models/                User, Note, Post schemas and indexes
+  middleware/            Auth, RBAC, validation, rate limits, errors
   modules/
-    auth/                Register, login, refresh, logout, profile, token repository
+    auth/                Register, login, profile, JWT issuance
     users/               Admin user management, repository, interests and posts views
     notes/               Note CRUD, ownership rules and repository
     posts/               Post creation and repository
   routes/                API router
-  utils/                 JWT, cookies, tokens, pagination, API errors, transactions, audit
+  utils/                 JWT, pagination, API errors, transactions, audit
 migrations/              migrate-mongo index synchronization
 scripts/seedAdmin.js     Creates or promotes an admin from environment variables
 docs/                    Backup/restore, observability and query-plan evidence
@@ -137,12 +136,9 @@ In development and tests, Mongoose auto-builds indexes. In production, `AUTO_IND
 | `JWT_SECRET` | ✅ | — | HS256 signing key, at least 32 characters |
 | `PORT` |  | `5000` | HTTP port |
 | `NODE_ENV` |  | `development` | `development`, `test` or `production` |
-| `JWT_EXPIRES_IN` |  | `15m` | Short-lived access-token lifetime |
+| `JWT_EXPIRES_IN` |  | `1h` | JWT lifetime |
 | `JWT_ISSUER` |  | `notes-api` | Verified `iss` claim |
 | `JWT_AUDIENCE` |  | `notes-client` | Verified `aud` claim |
-| `REFRESH_TOKEN_TTL_DAYS` |  | `7` | Refresh-token lifetime |
-| `COOKIE_SECURE` |  | `true` in production | Refresh/CSRF cookie `Secure` flag |
-| `COOKIE_SAME_SITE` |  | `none` in production, `lax` otherwise | Cookie `SameSite` policy |
 | `CORS_ORIGIN` |  | `http://localhost:5173` | Comma-separated allowed origins |
 | `BCRYPT_ROUNDS` |  | `12` | bcrypt cost factor |
 | `LOG_LEVEL` |  | `info` | Pino log level (`silent` in tests) |
@@ -161,34 +157,26 @@ In development and tests, Mongoose auto-builds indexes. In production, `AUTO_IND
 
 Base URL: `http://localhost:5000/api/v1`
 
-All protected routes expect a short-lived access token:
+All protected routes expect a JWT:
 
 ```http
-Authorization: Bearer <accessToken>
+Authorization: Bearer <token>
 ```
 
-Login and registration also set two cookies:
-
-- `refresh_token`: `HttpOnly`, `Secure` in production, `SameSite` configurable, scoped to `/api/v1/auth`.
-- `csrf_token`: readable by the SPA, used for the double-submit CSRF check.
-
-Refresh and logout require the `X-CSRF-Token` header to match the `csrf_token` cookie.
+Login and registration return the token in the JSON response. The SPA keeps it in memory/session storage; it is not set as a cookie.
 
 ### Auth
 
 | Method | Path | Access | Body / notes |
 | --- | --- | --- | --- |
-| `GET` | `/auth/csrf` | Public | Issues/rotates the CSRF cookie and returns the token |
-| `POST` | `/auth/register` | Public | `name`, `email`, `password`, `interests[]`; returns access token + sets cookies |
-| `POST` | `/auth/login` | Public | `email`, `password`; returns access token + sets cookies |
-| `POST` | `/auth/refresh` | Refresh cookie + CSRF | Rotates the refresh token and returns a new access token |
-| `POST` | `/auth/logout` | Refresh cookie + CSRF | Revokes the refresh token and clears cookies |
+| `POST` | `/auth/register` | Public | `name`, `email`, `password`, `interests[]`; returns a JWT |
+| `POST` | `/auth/login` | Public | `email`, `password`; returns a JWT |
 | `GET` | `/auth/me` | Authenticated | — |
-| `PATCH` | `/auth/me` | Authenticated | `name?`, `interests?`, `password?`; password change revokes all refresh tokens |
+| `PATCH` | `/auth/me` | Authenticated | `name?`, `interests?`, `password?` |
 
 Registration always creates a `user`; the `role` field cannot be escalated through the public endpoint.
 
-Refresh tokens are random 384-bit values. Only their SHA-256 hashes are stored. Every refresh rotates the token, and reusing an already-revoked token revokes every active session for that user.
+The token contains only `sub` and `role`. It expires after 1 hour; the client must log in again after expiry.
 
 ### Users (admin)
 
@@ -272,13 +260,13 @@ curl -X POST http://localhost:5000/api/v1/auth/register \
   -d '{"name":"Alice","email":"alice@example.com","password":"Password123!","interests":["chess","reading"]}'
 ```
 
-Login, store the short-lived access token and keep the refresh cookie in a jar:
+Login and store the JWT:
 
 ```bash
-TOKEN=$(curl -s -c cookies.txt -X POST http://localhost:5000/api/v1/auth/login \
+TOKEN=$(curl -s -X POST http://localhost:5000/api/v1/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"alice@example.com","password":"Password123!"}' \
-  | node -pe 'JSON.parse(require("fs").readFileSync(0)).data.accessToken')
+  | node -pe 'JSON.parse(require("fs").readFileSync(0)).data.token')
 ```
 
 Create and list notes:
@@ -313,11 +301,8 @@ Indexes are declared with `schema.index()` in `src/models/` so they are visible 
 | `notes` | `{ owner: 1, createdAt: -1, _id: -1 }` | A user's note list; admin filtering by owner |
 | `notes` | `{ createdAt: -1, _id: -1 }` | Admin all-notes list |
 | `posts` | `{ author: 1, createdAt: -1, _id: -1 }` | `$lookup` author match plus inner post sort |
-| `refreshtokens` | `{ tokenHash: 1 }` unique | Refresh lookup and replay protection |
-| `refreshtokens` | `{ user: 1, createdAt: -1 }` | Revoke-all on logout/password change/role change |
-| `refreshtokens` | `{ expiresAt: 1 }` TTL | Automatic cleanup of expired tokens |
 
-The refresh-token indexes are security infrastructure, not part of the assignment's note/user/post index strategy. They do not change the six task indexes.
+These are the **six** domain indexes. No refresh-token, role, text-search or all-posts index exists.
 
 ### Why these indexes
 
@@ -327,7 +312,6 @@ The refresh-token indexes are security infrastructure, not part of the assignmen
 - **`notes.createdAt + _id`** supports the admin view that spans all owners.
 - **`posts.author + createdAt + _id`** is the foreign-field index used by `$lookup`. It also supports the inner sort.
 - **`users.interests`** is a multikey index used by the optional `?interest=` equality filter before `$unwind`.
-- **`refreshtokens.tokenHash`** is unique so a token can be looked up in one read and cannot be duplicated. The `user + createdAt` index supports revoke-all operations; the TTL index removes expired rows.
 
 ### What is deliberately not indexed
 
@@ -434,8 +418,8 @@ npm run migrate:status
 
 - `GET /health` — liveness, version and uptime.
 - `GET /ready` — MongoDB ping; `503` when the database is unavailable.
-- Every request gets an `x-request-id`; logs are JSON and redact cookies, authorization headers and token fields.
-- Audit events (`audit: true`) record register/login/refresh/reuse/logout and admin user create/update/delete without secrets.
+- Every request gets an `x-request-id`; logs are JSON and redact authorization headers, password fields and token fields.
+- Audit events (`audit: true`) record register/login/profile updates and admin user create/update/delete without secrets.
 - Set `SENTRY_DSN` to enable optional Sentry error tracking.
 
 See [`docs/observability.md`](docs/observability.md).
@@ -454,16 +438,14 @@ See [`docs/performance.md`](docs/performance.md) for the reproducible `EXPLAIN` 
 
 - Passwords are hashed with bcrypt at cost 12 by default. The hash is `select: false` and is removed by the JSON transform, so it never appears in a response.
 - Passwords longer than 72 bytes are rejected at validation; bcrypt does not use bytes beyond that limit.
-- Access JWTs use HS256, a required 32+ character secret, a 15-minute expiry, and verified `issuer`/`audience` claims.
-- The access token contains only `sub` and `role`. The account is re-fetched on every authenticated request, so deleting a user or changing a role takes effect immediately.
-- Refresh tokens are 384-bit random values stored only as SHA-256 hashes. They rotate on every refresh, expire after 7 days by default, and are delivered in an `HttpOnly` cookie. Reuse of a revoked token revokes every active session for that user.
-- Refresh and logout use a double-submit CSRF token (`csrf_token` cookie + `X-CSRF-Token` header) with a timing-safe comparison.
-- In production, login/register are limited to 20 requests per 15 minutes per IP; refresh/CSRF/logout have a separate 300-per-15-minute session budget; the API is limited to 120 requests per minute. Development and test runs skip these limits so local reloads are not throttled.
-- Helmet sets security headers, CORS uses an explicit allowlist with credentials, and JSON bodies are capped at 100 KB.
+- JWTs use HS256, a required 32+ character secret, a 1-hour expiry, and verified `issuer`/`audience` claims.
+- The token contains only `sub` and `role`. The account is re-fetched on every authenticated request, so deleting a user or changing a role takes effect immediately.
+- Login/register are rate-limited separately from the general API. Limits apply in production; development and tests skip them so local reloads are not throttled.
+- Helmet sets security headers, CORS uses an explicit allowlist, and JSON bodies are capped at 100 KB.
 - Zod validates bodies, query strings and route parameters before they reach a service.
 - Ownership checks return `404` for another user's note rather than revealing that it exists.
 - Admins cannot delete their own account or change their own role. The service also blocks demoting or deleting the last admin.
-- Password changes, role changes, account deletion and logout revoke refresh tokens.
+- A password or role change does not revoke an already-issued JWT; the token remains valid until its 1-hour expiry. This is the deliberate trade-off for a single-token design.
 - Secrets are read from environment variables and are never committed.
 
 ---
@@ -477,18 +459,16 @@ npm test
 The suite uses Vitest and Supertest against a real MongoDB replica set, plus unit tests for pure logic and service edge cases. It covers:
 
 - Registration, login, duplicate emails, token failures and profile updates.
-- Access-token expiry handling and hash non-disclosure.
-- Refresh-token rotation, reuse detection, logout revocation and password-change revocation.
-- CSRF enforcement on refresh/logout and cookie flags.
+- Password hashing and hash non-disclosure.
 - Health and readiness endpoints.
 - Admin-only route protection.
-- User CRUD, bulk delete and cascade deletion of notes/posts/refresh tokens.
+- User CRUD, bulk delete and cascade deletion of notes/posts.
 - Note ownership isolation and admin read access.
 - Pagination metadata and page boundaries.
-- The exact custom index inventory for each model, including the refresh-token TTL index.
+- The exact six-index inventory for each model.
 - The interests aggregation (including a spy that asserts a single `aggregate()` call).
 - The posts `$lookup` aggregation (single `$lookup`, sorted and paginated).
-- Unit coverage for pagination, token hashing and auth-service reuse/rotation branches.
+- Unit coverage for pagination and auth-service login/registration branches.
 
 Tests use `MONGODB_URI_TEST` when set, otherwise `mongodb://127.0.0.1:27017/notes_api_test?replicaSet=rs0`. The GitHub Actions workflow starts a MongoDB 7 single-node replica set, initiates it, runs the repo-hygiene check, applies migrations, runs lint/tests and runs `npm audit --omit=dev --audit-level=high`.
 
@@ -509,20 +489,22 @@ docker compose exec api node scripts/seedAdmin.js
 
 The Compose stack starts MongoDB as a single-node replica set, waits for it to become healthy, then runs `npm run migrate:up` before starting the API. The API is available at `http://localhost:5000`; liveness is `GET /health` and readiness is `GET /ready`.
 
-Set `CORS_ORIGIN` to the frontend origin when running the two containers together. In production behind HTTPS, set `COOKIE_SECURE=true` and use the appropriate `COOKIE_SAME_SITE` value (`none` for a cross-site frontend, `lax` for same-site).
+Set `CORS_ORIGIN` to the frontend origin when running the two containers together. No cookie or CSRF configuration is required in this variant.
 
 The production image/release flow is documented in [`deploy/README.md`](deploy/README.md). The release workflow publishes `ghcr.io/arifkhan1990/backend-job-task` on `v*` tags; the deploy job is opt-in via repository variables and secrets.
 
 ## Production
 
-The API is deployed at **https://notes-api.nabasolution.tech**. Pushes to `main` auto-deploy through the self-hosted srv host; the container runs `npm run migrate:up` before starting.
+The **`main`** branch (refresh-token variant) is deployed at **https://notes-api.nabasolution.tech**. Pushes to `main` auto-deploy through the self-hosted srv host; the container runs `npm run migrate:up` before starting.
+
+The **`strict-pdf`** branch is an alternative, single-JWT submission and is not deployed.
 
 ---
 
 ## Design decisions and trade-offs
 
-- **Short access token + rotating refresh token.** Access tokens live for 15 minutes; refresh tokens are hashed, rotated and revocable. The frontend refreshes silently and logs out when refresh fails.
+- **Single JWT, no refresh token.** The token lives for 1 hour; the client logs in again after expiry. Password/role changes do not revoke an already-issued token before expiry. This is the strict-PDF variant; the `main` branch keeps rotating refresh tokens and CSRF for stronger revocation guarantees.
 - **Offset pagination.** It is simple and gives page numbers. Very deep pages still pay a `skip` cost; cursor pagination on `_id` would be the next step for large datasets.
-- **Transactions require a replica set.** User deletion, registration and refresh-token rotation are transactional. The Compose and CI environments use a single-node replica set; a standalone local `mongod` will reject transactions.
+- **Transactions require a replica set.** User update/delete and bulk delete are transactional. The Compose and CI environments use a single-node replica set; a standalone local `mongod` will reject transactions.
 - **Admin can read but not mutate other users' notes.** This matches the permission table: admins manage users and view everyone's notes, while note mutation stays with the owner.
 - **Grouped interests returns the full member list per group.** Pagination is at the group level. At large scale, member lists would be capped or paginated separately.

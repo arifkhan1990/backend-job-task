@@ -4,9 +4,8 @@
 
 The API uses `pino` with JSON logs. Every request gets an `x-request-id` header (incoming value reused when present, otherwise a UUID). Logs redact:
 
-- `Authorization` and `Cookie` request headers
-- `Set-Cookie` response headers
-- password, token, access-token, refresh-token and CSRF fields
+- `Authorization` request headers
+- password and token fields
 
 Example:
 
@@ -25,9 +24,9 @@ Example:
 
 Security-sensitive actions emit an `audit: true` event through the same logger:
 
-- `auth.register`, `auth.login`, `auth.refresh`, `auth.refresh.reuse`, `auth.logout`
+- `auth.register`, `auth.login`
 - `auth.profile.update`
-- `user.create`, `user.update`, `user.delete`
+- `user.create`, `user.update`, `user.delete`, `user.bulk_delete`
 
 Audit events include the actor id, target id, changed field names and role where relevant. They never include passwords, hashes or tokens.
 

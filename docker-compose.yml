@@ -30,12 +30,9 @@ services:
       MONGODB_URI: mongodb://mongo:27017/notes_api?replicaSet=rs0
       AUTO_INDEX: "false"
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET before starting the stack}
-      JWT_EXPIRES_IN: 15m
+      JWT_EXPIRES_IN: 1h
       JWT_ISSUER: notes-api
       JWT_AUDIENCE: notes-client
-      REFRESH_TOKEN_TTL_DAYS: 7
-      COOKIE_SECURE: ${COOKIE_SECURE:-false}
-      COOKIE_SAME_SITE: ${COOKIE_SAME_SITE:-lax}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
       BCRYPT_ROUNDS: 12
       LOG_LEVEL: ${LOG_LEVEL:-info}

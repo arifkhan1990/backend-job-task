@@ -7,18 +7,10 @@ export const logger = pino({
   redact: {
     paths: [
       'req.headers.authorization',
-      'req.headers.cookie',
-      'res.headers["set-cookie"]',
       'password',
       '*.password',
       'token',
       '*.token',
-      'accessToken',
-      '*.accessToken',
-      'refreshToken',
-      '*.refreshToken',
-      'csrfToken',
-      '*.csrfToken',
     ],
     censor: '[redacted]',
   },
