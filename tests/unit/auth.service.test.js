@@ -10,29 +10,12 @@ vi.mock('../../src/modules/users/user.repository.js', () => ({
   },
 }));
 
-vi.mock('../../src/modules/auth/refresh-token.repository.js', () => ({
-  refreshTokenRepository: {
-    create: vi.fn(),
-    findByHash: vi.fn(),
-    revokeByHash: vi.fn(),
-    revokeAllForUser: vi.fn(),
-    deleteByHash: vi.fn(),
-    deleteByUser: vi.fn(),
-  },
-}));
-
-vi.mock('../../src/utils/transaction.js', () => ({
-  withTransaction: vi.fn((work) => work({})),
-}));
-
-import { refreshTokenRepository } from '../../src/modules/auth/refresh-token.repository.js';
 import {
   loginUser,
-  rotateRefreshToken,
+  registerUser,
   updateProfile,
 } from '../../src/modules/auth/auth.service.js';
 import { userRepository } from '../../src/modules/users/user.repository.js';
-import { withTransaction } from '../../src/utils/transaction.js';
 
 function makeUser(overrides = {}) {
   return {
@@ -46,10 +29,9 @@ function makeUser(overrides = {}) {
 describe('auth service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    withTransaction.mockImplementation((work) => work({}));
   });
 
-  it('rejects wrong credentials without revealing which part failed', async () => {
+  it('rejects wrong credentials with a generic error', async () => {
     const user = makeUser();
     user.comparePassword.mockResolvedValue(false);
     userRepository.findByEmail.mockResolvedValue(user);
@@ -60,11 +42,9 @@ describe('auth service', () => {
       statusCode: 401,
       code: 'INVALID_CREDENTIALS',
     });
-
-    expect(refreshTokenRepository.create).not.toHaveBeenCalled();
   });
 
-  it('creates a refresh session on successful login', async () => {
+  it('returns a JWT on successful login', async () => {
     const user = makeUser();
     userRepository.findByEmail.mockResolvedValue(user);
 
@@ -74,75 +54,35 @@ describe('auth service', () => {
     });
 
     expect(result.user).toBe(user);
-    expect(result.accessToken).toBeTypeOf('string');
-    expect(result.refreshToken).toBeTypeOf('string');
-    expect(refreshTokenRepository.create).toHaveBeenCalledTimes(1);
+    expect(result.token).toBeTypeOf('string');
   });
 
-  it('revokes every session when a revoked refresh token is reused', async () => {
+  it('creates a user and JWT on registration', async () => {
     const user = makeUser();
-    refreshTokenRepository.findByHash.mockResolvedValue({
-      revokedAt: new Date(),
-      user,
+    userRepository.create.mockResolvedValue(user);
+
+    const result = await registerUser({
+      name: 'Alice',
+      email: 'alice@example.com',
+      password: 'Password123!',
+      interests: ['chess'],
     });
 
-    await expect(rotateRefreshToken('reused-token')).rejects.toMatchObject({
-      statusCode: 401,
-      code: 'REFRESH_TOKEN_REUSED',
-    });
-
-    expect(refreshTokenRepository.revokeAllForUser).toHaveBeenCalledWith(user._id);
-  });
-
-  it('rotates a valid refresh token', async () => {
-    const user = makeUser();
-    refreshTokenRepository.findByHash.mockResolvedValue({
-      revokedAt: null,
-      expiresAt: new Date(Date.now() + 60_000),
-      user,
-    });
-    refreshTokenRepository.revokeByHash.mockResolvedValue({ _id: 'revoked' });
-
-    const result = await rotateRefreshToken('current-token');
-
-    expect(result.accessToken).toBeTypeOf('string');
-    expect(result.refreshToken).toBeTypeOf('string');
-    expect(result.refreshToken).not.toBe('current-token');
-    expect(refreshTokenRepository.revokeByHash).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ replacedByHash: expect.any(String) }),
+    expect(userRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ role: 'user' }),
     );
-    expect(refreshTokenRepository.create).toHaveBeenCalledTimes(1);
+    expect(result.user).toBe(user);
+    expect(result.token).toBeTypeOf('string');
   });
 
-  it('detects a concurrent refresh race and revokes the account sessions', async () => {
-    const user = makeUser();
-    refreshTokenRepository.findByHash.mockResolvedValue({
-      revokedAt: null,
-      expiresAt: new Date(Date.now() + 60_000),
-      user,
-    });
-    refreshTokenRepository.revokeByHash.mockResolvedValue(null);
-
-    await expect(rotateRefreshToken('racing-token')).rejects.toMatchObject({
-      statusCode: 401,
-      code: 'REFRESH_TOKEN_REUSED',
-    });
-
-    expect(refreshTokenRepository.revokeAllForUser).toHaveBeenCalledWith(user._id);
-  });
-
-  it('revokes refresh tokens when the profile password changes', async () => {
+  it('saves profile changes', async () => {
     const user = makeUser();
     userRepository.findById.mockResolvedValue(user);
     userRepository.save.mockResolvedValue(user);
 
-    await updateProfile(user._id.toString(), { password: 'NewPassword123!' });
+    const result = await updateProfile(user._id.toString(), { name: 'Updated' });
 
     expect(userRepository.save).toHaveBeenCalledTimes(1);
-    expect(refreshTokenRepository.revokeAllForUser).toHaveBeenCalledWith(
-      user._id,
-      expect.objectContaining({ session: expect.anything() }),
-    );
+    expect(result.name).toBe('Updated');
   });
 });

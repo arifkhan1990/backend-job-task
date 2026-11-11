@@ -9,7 +9,7 @@ describe('api docs', () => {
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toContain('yaml');
     expect(res.text).toContain('openapi: 3.0.3');
-    expect(res.text).toContain('/auth/refresh');
+    expect(res.text).toContain('/auth/login');
   });
 
   it('serves Swagger UI', async () => {

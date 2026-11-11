@@ -1,6 +1,5 @@
 import { noteRepository } from '../notes/note.repository.js';
 import { postRepository } from '../posts/post.repository.js';
-import { refreshTokenRepository } from '../auth/refresh-token.repository.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { audit } from '../../utils/audit.js';
 import { getPagination, paginationMeta } from '../../utils/pagination.js';
@@ -68,10 +67,6 @@ export async function updateUser(id, updates, actorId) {
     Object.assign(existing, updates);
     await userRepository.save(existing, { session });
 
-    if (updates.password || roleChanged) {
-      await refreshTokenRepository.revokeAllForUser(existing._id, { session });
-    }
-
     return existing;
   });
 
@@ -108,7 +103,6 @@ export async function deleteUser(id, actorId) {
     await userRepository.deleteById(id, { session });
     await noteRepository.deleteByOwner(existing._id, { session });
     await postRepository.deleteByAuthor(existing._id, { session });
-    await refreshTokenRepository.deleteByUser(existing._id, { session });
 
     return existing;
   });
@@ -148,7 +142,6 @@ export async function bulkDeleteUsers(ids, actorId) {
     await userRepository.deleteManyByIds(userIds, { session });
     await noteRepository.deleteByOwners(userIds, { session });
     await postRepository.deleteByAuthors(userIds, { session });
-    await refreshTokenRepository.deleteByUsers(userIds, { session });
 
     return users.length;
   });

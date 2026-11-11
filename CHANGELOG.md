@@ -12,6 +12,19 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - Production image now ships `migrations/` and `migrate-mongo-config.js` and runs pending migrations before the API starts.
 
+## [strict-pdf] - 2026-11-11
+
+### Changed
+
+- Replaced rotating refresh tokens, refresh cookies and CSRF with a single 1-hour JWT.
+- Removed the `refreshtokens` collection and its three indexes. Only the six task indexes remain.
+- Removed `/auth/refresh`, `/auth/logout` and `/auth/csrf`; login/register return `{ user, token }`.
+- Simplified auth tests to 40 tests (33 API/integration + 7 unit).
+
+### Trade-off
+
+- A password/role change does not revoke an already-issued JWT before its 1-hour expiry. The main branch keeps the stronger refresh-token design.
+
 ## [1.1.0] - 2026-11-10
 
 ### Added

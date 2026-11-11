@@ -1,10 +1,9 @@
 import mongoose from 'mongoose';
 import { Note } from '../src/models/Note.js';
 import { Post } from '../src/models/Post.js';
-import { RefreshToken } from '../src/models/RefreshToken.js';
 import { User } from '../src/models/User.js';
 
-const models = [User, Note, Post, RefreshToken];
+const models = [User, Note, Post];
 
 async function withModels(work) {
   await mongoose.connect(process.env.MONGODB_URI);

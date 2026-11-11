@@ -28,18 +28,4 @@ export const authLimiter = rateLimit({
   },
 });
 
-// Refresh/CSRF traffic is normal session maintenance, not a brute-force target.
-// Keep it bounded without sharing the strict login budget.
-export const sessionLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 300,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
-  skip: skipOutsideProduction,
-  message: {
-    error: {
-      code: 'RATE_LIMITED',
-      message: 'Too many session requests. Try again shortly.',
-    },
-  },
-});
+
